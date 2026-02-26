@@ -42,6 +42,7 @@ module mctc_env
    use mctc_env_error, only : error_type, fatal_error, mctc_stat
    use mctc_env_system, only : get_argument, get_variable, &
       & is_unix, is_windows
+   use mctc_env_timer, only : timer_type, format_time
    implicit none
    public
 
