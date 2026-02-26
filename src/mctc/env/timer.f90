@@ -39,6 +39,22 @@ pure function format_string_int(val, format) result(str)
    end if
 end function format_string_int
 
+pure function format_string_real_dp(val, format) result(str)
+   real(wp), intent(in) :: val
+   character(len=*), intent(in) :: format
+   character(len=:), allocatable :: str
+
+   character(len=128) :: buffer
+   integer :: stat
+
+   write(buffer, format, iostat=stat) val
+   if (stat == 0) then
+      str = trim(buffer)
+   else
+      str = "*"
+   end if
+end function format_string_real_dp
+
 subroutine push(self, label)
    class(timer_type), intent(inout) :: self
    character(len=*), intent(in) :: label
@@ -148,21 +164,21 @@ function format_time(time) result(string)
    secs = time - mins*60.0_wp
 
    if (days > 0) then
-      string = format_string(days, '(i0, " d,")')
+      string = format_string_int(days, '(i0, " d,")')
    else
       string = repeat(" ", 4)
    end if
    if (hours > 0) then
-      string = string // format_string(hours, '(1x, i2, " h,")')
+      string = string // format_string_int(hours, '(1x, i2, " h,")')
    else
       string = string // repeat(" ", 6)
    end if
    if (mins > 0) then
-      string = string // format_string(mins, '(1x, i2, " min,")')
+      string = string // format_string_int(mins, '(1x, i2, " min,")')
    else
       string = string // repeat(" ", 8)
    end if
-   string = string // format_string(secs, '(f6.3)')//" sec"
+   string = string // format_string_real_dp(secs, '(f6.3)')//" sec"
 end function format_time
 
 
