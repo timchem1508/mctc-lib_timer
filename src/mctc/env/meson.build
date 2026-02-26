@@ -17,4 +17,5 @@ srcs += files(
   'error.f90',
   'system.f90',
   'testing.f90',
+  'timer.f90',
 )

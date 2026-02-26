@@ -20,6 +20,7 @@ list(
   "${dir}/error.f90"
   "${dir}/system.f90"
   "${dir}/testing.f90"
+  "${dir}/timer.f90"
 )
 
 set(srcs "${srcs}" PARENT_SCOPE)
