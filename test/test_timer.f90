@@ -61,17 +61,11 @@ subroutine test_push_pop(error)
    call tmr%push("test")
 
    ! busy-wait for a small positive time interval
-   call system_clock(t0, rate)
-   do
-      call system_clock(tnow)
-      if (real(tnow - t0, wp)/real(rate, wp) >= 1.0e-3_wp) exit
-   end do
-
-   call tmr%pop()
+   call sleep(1)
 
    elapsed = tmr%get("test")
 
-   call check(error, elapsed > 0.0_wp, .true., "timer elapsed time must be positive")
+   call check(error, elapsed > 1.0_wp, .true., "timer elapsed time must be positive")
 
 end subroutine test_push_pop
 
