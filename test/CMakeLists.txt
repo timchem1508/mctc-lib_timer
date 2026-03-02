@@ -47,6 +47,7 @@ set(
   "write-turbomole"
   "write-vasp"
   "write-xyz"
+  "timer"
 )
 set(
   test-srcs

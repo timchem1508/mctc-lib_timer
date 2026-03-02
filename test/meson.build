@@ -45,6 +45,7 @@ tests = [
   'write-turbomole',
   'write-vasp',
   'write-xyz',
+  'timer',
 ]
 
 test_srcs = files(

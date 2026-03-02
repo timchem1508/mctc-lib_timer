@@ -22,6 +22,7 @@ program tester
    use test_data, only : collect_data
    use test_math, only : collect_math
    use test_ncoord, only : collect_ncoord
+   use test_timer, only : collect_timer
    use test_read, only : collect_read
    use test_read_aims, only : collect_read_aims
    use test_read_cjson, only : collect_read_cjson
@@ -63,6 +64,7 @@ program tester
       & new_testsuite("data", collect_data), &
       & new_testsuite("math", collect_math), &
       & new_testsuite("ncoord", collect_ncoord), &
+      & new_testsuite("timer", collect_timer), &
       & new_testsuite("symbols", collect_symbols), &
       & new_testsuite("read", collect_read), &
       & new_testsuite("read-aims", collect_read_aims), &

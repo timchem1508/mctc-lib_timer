@@ -1,3 +1,17 @@
+! This file is part of mctc-lib.
+!
+! Licensed under the Apache License, Version 2.0 (the "License");
+! you may not use this file except in compliance with the License.
+! You may obtain a copy of the License at
+!
+!     http://www.apache.org/licenses/LICENSE-2.0
+!
+! Unless required by applicable law or agreed to in writing, software
+! distributed under the License is distributed on an "AS IS" BASIS,
+! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+! See the License for the specific language governing permissions and
+! limitations under the License.
+
 module mctc_env_timer
    use mctc_env_accuracy, only : wp, i8
    implicit none
@@ -22,38 +36,6 @@ module mctc_env_timer
    end type timer_type
 
 contains
-
-pure function format_string_int(val, format) result(str)
-   integer, intent(in) :: val
-   character(len=*), intent(in) :: format
-   character(len=:), allocatable :: str
-
-   character(len=128) :: buffer
-   integer :: stat
-
-   write(buffer, format, iostat=stat) val
-   if (stat == 0) then
-      str = trim(buffer)
-   else
-      str = "*"
-   end if
-end function format_string_int
-
-pure function format_string_real_dp(val, format) result(str)
-   real(wp), intent(in) :: val
-   character(len=*), intent(in) :: format
-   character(len=:), allocatable :: str
-
-   character(len=128) :: buffer
-   integer :: stat
-
-   write(buffer, format, iostat=stat) val
-   if (stat == 0) then
-      str = trim(buffer)
-   else
-      str = "*"
-   end if
-end function format_string_real_dp
 
 subroutine push(self, label)
    class(timer_type), intent(inout) :: self
@@ -224,5 +206,37 @@ pure subroutine resize(var, n)
    end if
 
 end subroutine resize
+
+pure function format_string_int(val, format) result(str)
+   integer, intent(in) :: val
+   character(len=*), intent(in) :: format
+   character(len=:), allocatable :: str
+
+   character(len=128) :: buffer
+   integer :: stat
+
+   write(buffer, format, iostat=stat) val
+   if (stat == 0) then
+      str = trim(buffer)
+   else
+      str = "*"
+   end if
+end function format_string_int
+
+pure function format_string_real_dp(val, format) result(str)
+   real(wp), intent(in) :: val
+   character(len=*), intent(in) :: format
+   character(len=:), allocatable :: str
+
+   character(len=128) :: buffer
+   integer :: stat
+
+   write(buffer, format, iostat=stat) val
+   if (stat == 0) then
+      str = trim(buffer)
+   else
+      str = "*"
+   end if
+end function format_string_real_dp
 
 end module mctc_env_timer
