@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('erf')
-subdir('adjlist')
+set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
 
-srcs += files(
-  'dexp.f90',
-  'exp.f90',
-  'erf.f90',
-  'type.f90',
+list(
+  APPEND srcs
+  "${dir}/type.f90"
 )
+
+set(srcs "${srcs}" PARENT_SCOPE)

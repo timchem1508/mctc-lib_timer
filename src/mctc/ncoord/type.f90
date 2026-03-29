@@ -17,6 +17,7 @@ module mctc_ncoord_type
    use mctc_env, only : wp
    use mctc_io, only : structure_type
    use mctc_cutoff, only : get_lattice_points
+   use mctc_ncoord_adjlist_type, only : adjacency_list
 
    implicit none
    private
@@ -108,7 +109,7 @@ contains
    end subroutine get_cn
 
    !> Geometric fractional coordination number
-   subroutine get_coordination_number(self, mol, trans, cn, dcndr, dcndL)
+   subroutine get_coordination_number(self, mol, trans, cn, dcndr, dcndL, list)
 
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -128,10 +129,21 @@ contains
       !> Derivative of the CN with respect to strain deformations.
       real(wp), intent(out), optional :: dcndL(:, :, :)
 
-      if (present(dcndr) .and. present(dcndL)) then
-         call ncoord_d(self, mol, trans, cn, dcndr, dcndL)
-      else
-         call ncoord(self, mol, trans, cn)
+      !> Adjacency list for neighbourlist-based CN evaluation
+      type(adjacency_list), intent(in), optional :: list
+
+      if (present(list)) then
+         if (present(dcndr) .and. present(dcndL)) then
+            call ncoord_d_list(self, mol, trans, cn, dcndr, dcndL, list)
+         else
+            call ncoord_list(self, mol, trans, cn, list)
+         end if
+      else 
+         if (present(dcndr) .and. present(dcndL)) then
+            call ncoord_d(self, mol, trans, cn, dcndr, dcndL)
+         else
+            call ncoord(self, mol, trans, cn)
+         end if
       end if
 
       if (self%cut > 0.0_wp) then
@@ -196,6 +208,65 @@ contains
       !$omp end parallel
 
    end subroutine ncoord
+
+   subroutine ncoord_list(self, mol, trans, cn, list)
+      !> Coordination number container
+      class(ncoord_type), intent(in) :: self
+      !> Molecular structure data
+      type(structure_type), intent(in) :: mol
+      !> Lattice points
+      real(wp), intent(in) :: trans(:, :)
+      !> Error function coordination number.
+      real(wp), intent(out) :: cn(:)
+      !> Adjacency list for neighbourlist-based CN evaluation
+      type(adjacency_list), intent(in) :: list
+
+      integer :: iat, jat, kat, izp, jzp, itr
+      real(wp) :: r2, r1, rij(3), countf, cutoff2, den
+
+      ! Thread-private array for reduction
+      real(wp), allocatable :: cn_local(:)
+
+      cn(:) = 0.0_wp
+      cutoff2 = self%cutoff**2
+
+      !$omp parallel default(none) &
+      !$omp shared(self, mol, list, trans, cutoff2, cn) &
+      !$omp private(jat, kat, itr, izp, jzp, r2, rij, r1, den, countf) &
+      !$omp private(cn_local)
+      allocate(cn_local, source=cn)
+      !$omp do schedule(runtime)
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         do kat = list%inl(iat) + 1, list%inl(iat) + list%nnl(iat)
+            jat = list%nlat(kat)
+            jzp = mol%id(jat)
+            den = self%get_en_factor(izp, jzp)
+
+            do itr = 1, size(trans, dim=2)
+               rij = mol%xyz(:, iat) - (mol%xyz(:, jat) + trans(:, itr))
+               r2 = sum(rij**2)
+               if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
+               r1 = sqrt(r2)
+
+               countf = den * self%ncoord_count(izp, jzp, r1)
+
+               cn_local(iat) = cn_local(iat) + countf
+               if (iat /= jat) then
+                  cn_local(jat) = cn_local(jat) + countf * self%directed_factor
+               end if
+
+            end do
+         end do
+      end do
+      !$omp end do
+      !$omp critical (ncoord_list_)
+      cn(:) = cn(:) + cn_local(:)
+      !$omp end critical (ncoord_list_)
+      deallocate(cn_local)
+      !$omp end parallel
+
+   end subroutine ncoord_list
 
    subroutine ncoord_d(self, mol, trans, cn, dcndr, dcndL)
       !> Coordination number container
@@ -276,6 +347,89 @@ contains
       !$omp end parallel
 
    end subroutine ncoord_d
+
+   subroutine ncoord_d_list(self, mol, trans, cn, dcndr, dcndL, list)
+      !> Coordination number container
+      class(ncoord_type), intent(in) :: self
+      !> Molecular structure data
+      type(structure_type), intent(in) :: mol
+      !> Lattice points
+      real(wp), intent(in) :: trans(:, :)
+      !> Error function coordination number.
+      real(wp), intent(out) :: cn(:)
+      !> Derivative of the CN with respect to the Cartesian coordinates.
+      real(wp), intent(out) :: dcndr(:, :, :)
+      !> Derivative of the CN with respect to strain deformations.
+      real(wp), intent(out) :: dcndL(:, :, :)
+      !> Adjacency list for neighbourlist-based CN evaluation
+      type(adjacency_list), intent(in) :: list
+
+      integer :: iat, jat, kat, izp, jzp, itr
+      real(wp) :: r2, r1, rij(3), countf, countd(3), sigma(3, 3), cutoff2, den
+
+      ! Thread-private arrays for reduction
+      real(wp), allocatable :: cn_local(:)
+      real(wp), allocatable :: dcndr_local(:, :, :), dcndL_local(:, :, :)
+
+      cn(:) = 0.0_wp
+      dcndr(:, :, :) = 0.0_wp
+      dcndL(:, :, :) = 0.0_wp
+      cutoff2 = self%cutoff**2
+
+      !$omp parallel default(none) &
+      !$omp shared(self, mol, list, trans, cutoff2, cn, dcndr, dcndL) &
+      !$omp private(jat, kat, itr, izp, jzp, r2, rij, r1, den, countf, countd) &
+      !$omp private(sigma, cn_local, dcndr_local, dcndL_local)
+      allocate(cn_local, source=cn)
+      allocate(dcndr_local, source=dcndr)
+      allocate(dcndL_local, source=dcndL)
+      !$omp do schedule(runtime)
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         do kat = list%inl(iat) + 1, list%inl(iat) + list%nnl(iat)
+            jat = list%nlat(kat)
+            jzp = mol%id(jat)
+            den = self%get_en_factor(izp, jzp)
+
+            do itr = 1, size(trans, dim=2)
+               rij = mol%xyz(:, iat) - (mol%xyz(:, jat) + trans(:, itr))
+               r2 = sum(rij**2)
+               if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
+               r1 = sqrt(r2)
+
+               countf = den * self%ncoord_count(izp, jzp, r1)
+               countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
+
+               cn_local(iat) = cn_local(iat) + countf
+               if (iat /= jat) then
+                  cn_local(jat) = cn_local(jat) + countf * self%directed_factor
+               end if
+
+               dcndr_local(:, iat, iat) = dcndr_local(:, iat, iat) + countd
+               dcndr_local(:, jat, jat) = dcndr_local(:, jat, jat) - countd * self%directed_factor
+               dcndr_local(:, iat, jat) = dcndr_local(:, iat, jat) + countd * self%directed_factor
+               dcndr_local(:, jat, iat) = dcndr_local(:, jat, iat) - countd
+
+               sigma = spread(countd, 1, 3) * spread(rij, 2, 3)
+
+               dcndL_local(:, :, iat) = dcndL_local(:, :, iat) + sigma
+               if (iat /= jat) then
+                  dcndL_local(:, :, jat) = dcndL_local(:, :, jat) + sigma * self%directed_factor
+               end if
+
+            end do
+         end do
+      end do
+      !$omp end do
+      !$omp critical (ncoord_d_list_)
+      cn(:) = cn(:) + cn_local(:)
+      dcndr(:, :, :) = dcndr(:, :, :) + dcndr_local(:, :, :)
+      dcndL(:, :, :) = dcndL(:, :, :) + dcndL_local(:, :, :)
+      !$omp end critical (ncoord_d_list_)
+      deallocate(cn_local, dcndr_local, dcndL_local)
+      !$omp end parallel
+
+   end subroutine ncoord_d_list
 
 
    subroutine add_coordination_number_derivs(self, mol, trans, dEdcn, gradient, sigma)
