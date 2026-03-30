@@ -72,7 +72,7 @@ module mctc_ncoord_adjlist_type
 
 
     ! Default input 
-    real(wp), parameter :: cutoff_def = 28.0_wp
+    real(wp), parameter :: cutoff_def = 29.0_wp
     logical, parameter :: complete_def = .false.
     integer, parameter :: init_size = 10
     real(wp), parameter :: buffer = 0.1_wp
