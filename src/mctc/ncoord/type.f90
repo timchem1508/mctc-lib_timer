@@ -47,6 +47,8 @@ module mctc_ncoord_type
       procedure :: get_en_factor
       !> Add CN derivative of an arbitrary function
       procedure :: add_coordination_number_derivs
+      !> Add CN derivative of an arbitrary function using the neighbour list
+      procedure :: add_coordination_number_derivs_list
       !> Evaluates the counting function (exp, dexp, erf, ...)
       procedure(ncoord_count),  deferred :: ncoord_count
       !> Evaluates the derivative of the counting function (exp, dexp, erf, ...)
@@ -90,11 +92,13 @@ module mctc_ncoord_type
 contains
 
    !> Wrapper for CN using the CN cutoff for the lattice
-   subroutine get_cn(self, mol, cn, dcndr, dcndL)
+   subroutine get_cn(self, mol, cn, dcndr, dcndL, list)
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
+      !> Adjacency list for neighbourlist-based CN evaluation
+      type(adjacency_list), intent(in), optional :: list
       !> Error function coordination number.
       real(wp), intent(out) :: cn(:)
       !> Derivative of the CN with respect to the Cartesian coordinates.
@@ -105,7 +109,7 @@ contains
       real(wp), allocatable :: lattr(:, :)
 
       call get_lattice_points(mol%periodic, mol%lattice, self%cutoff, lattr)
-      call get_coordination_number(self, mol, lattr, cn, dcndr, dcndL)
+      call get_coordination_number(self, mol, lattr, cn, dcndr, dcndL, list)
    end subroutine get_cn
 
    !> Geometric fractional coordination number
@@ -131,6 +135,8 @@ contains
 
       !> Adjacency list for neighbourlist-based CN evaluation
       type(adjacency_list), intent(in), optional :: list
+
+
 
       if (present(list)) then
          if (present(dcndr) .and. present(dcndL)) then
@@ -504,6 +510,83 @@ contains
       !$omp end parallel
 
    end subroutine add_coordination_number_derivs
+
+   subroutine add_coordination_number_derivs_list(self, mol, trans, dEdcn, gradient, sigma, list)
+
+      !> Coordination number container
+      class(ncoord_type), intent(in) :: self
+
+      !> Molecular structure data
+      type(structure_type), intent(in) :: mol
+   
+      !> Lattice points
+      real(wp), intent(in) :: trans(:, :)
+   
+      !> Derivative of expression with respect to the coordination number
+      real(wp), intent(in) :: dEdcn(:)
+   
+      !> Derivative of the CN with respect to the Cartesian coordinates
+      real(wp), intent(inout) :: gradient(:, :)
+   
+      !> Derivative of the CN with respect to strain deformations
+      real(wp), intent(inout) :: sigma(:, :)
+
+      !> Adjacency list for neighbourlist-based CN evaluation
+      type(adjacency_list), intent(in) :: list
+   
+      integer :: iat, jat, kat, izp, jzp, itr
+      real(wp) :: r2, r1, rij(3), countd(3), ds(3, 3), cutoff2, den
+
+      ! Thread-private arrays for reduction
+      ! Set to zero explicitly as the shared variants are potentially non-zero (inout)
+      real(wp), allocatable :: gradient_local(:, :), sigma_local(:, :)
+   
+      cutoff2 = self%cutoff**2
+
+      !$omp parallel default(none) &
+      !$omp shared(self, mol, list, trans, cutoff2, dEdcn, gradient, sigma) &
+      !$omp private(iat, jat, kat, itr, izp, jzp, r2, rij, r1, countd, ds, den) &
+      !$omp private(gradient_local, sigma_local)
+      allocate(gradient_local(size(gradient, 1), size(gradient, 2)), source=0.0_wp)
+      allocate(sigma_local(size(sigma, 1), size(sigma, 2)), source=0.0_wp)
+      !$omp do schedule(runtime)
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         do kat = list%inl(iat) + 1, list%inl(iat) + list%nnl(iat)
+            jat = list%nlat(kat)
+            jzp = mol%id(jat)
+            den = self%get_en_factor(izp, jzp)
+
+            do itr = 1, size(trans, dim=2)
+               rij = mol%xyz(:, iat) - (mol%xyz(:, jat) + trans(:, itr))
+               r2 = sum(rij**2)
+               if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
+               r1 = sqrt(r2)
+
+               countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
+
+               gradient_local(:, iat) = gradient_local(:, iat) + countd &
+                  & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
+               gradient_local(:, jat) = gradient_local(:, jat) - countd &
+                  & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
+   
+               ds = spread(countd, 1, 3) * spread(rij, 2, 3)
+   
+               sigma_local(:, :) = sigma_local(:, :) &
+                  & + ds * (dEdcn(iat) + &
+                  & merge(dEdcn(jat) * self%directed_factor, 0.0_wp, jat /= iat))
+            end do
+         end do
+      end do
+      !$omp end do
+      !$omp critical (add_coordination_number_derivs_list_)
+      gradient(:, :) = gradient(:, :) + gradient_local(:, :)
+      sigma(:, :) = sigma(:, :) + sigma_local(:, :)
+      !$omp end critical (add_coordination_number_derivs_list_)
+      deallocate(gradient_local, sigma_local)
+      !$omp end parallel
+
+   end subroutine add_coordination_number_derivs_list
 
 
    !> Evaluates pairwise electronegativity factor if non applies

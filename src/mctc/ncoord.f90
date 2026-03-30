@@ -53,10 +53,12 @@ module mctc_ncoord
    use mctc_ncoord_erf, only : erf_ncoord_type, new_erf_ncoord
    use mctc_ncoord_erf_en, only : erf_en_ncoord_type, new_erf_en_ncoord
    use mctc_ncoord_erf_dftd4, only : erf_dftd4_ncoord_type, new_erf_dftd4_ncoord
+   use mctc_ncoord_adjlist_type, only: adjacency_list, new_adjacency_list
    implicit none
    private
 
    public :: ncoord_type, new_ncoord, cn_count, get_cn_count_id, get_cn_count_string
+   public :: adjacency_list, new_adjacency_list
 
 
    !> Possible coordination number counting functions
