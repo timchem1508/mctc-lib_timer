@@ -133,9 +133,12 @@ contains
         integer, allocatable :: head(:), nxt(:)
         integer :: n_xyz(3)
         real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3)
+        
+        real(wp), allocatable :: trans(:,:)
 
         img = 0
         cutoff2 = self%cutoff**2
+        allocate(trans(3,1), source=0.0_wp)
 
         ! 1. Define the grid boundaries and dimensions
         ! We add a small buffer to the bounding box to ensure all atoms are contained
@@ -186,22 +189,22 @@ contains
                 do while (jat > 0)
 
                     ! Symmetrical optimization: skip if jat > iat and complete is false
-                    if (.not. self%complete .and. jat >= iat) then
+                    if (.not. self%complete .and. jat > iat) then
                         jat = nxt(jat)
                         cycle
                     end if
 
-                    ! Check all translation images for this atom pair
-                    vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) 
-                    r2 = sum(vec**2.0_wp)
-                    
-                    ! Standard distance check and self-interaction exclusion
-                    if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
-                    
-                    img = img + 1
-                    if (size(self%nlat) < img) call resize(self%nlat)
-                    self%nlat(img) = jat
-
+                    do itr = 1, size(trans, 2)
+                        vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - trans(:, itr)
+                        r2 = sum(vec**2)
+                        
+                        ! Standard distance check and self-interaction exclusion
+                        if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
+                        
+                        img = img + 1
+                        if (size(self%nlat) < img) call resize(self%nlat)
+                        self%nlat(img) = jat
+                    end do
                     jat = nxt(jat)
                 end do
             end do; end do; end do
