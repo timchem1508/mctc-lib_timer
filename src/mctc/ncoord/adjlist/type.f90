@@ -153,32 +153,20 @@ contains
       allocate(head(product(n_xyz)), source=0)
       allocate(nxt(mol%nat), source=0)
 
-      !$omp parallel do default(none) &
-      !$omp shared(mol, cell_w, min_xyz, max_xyz, n_xyz, nxt, head) &
-      !$omp private(iat, ix, iy, iz, ic) schedule(runtime)
       do iat = 1, mol%nat
          ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
          iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
          iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
 
          ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
-         !$omp atomic write
          nxt(iat) = head(ic)
-         !$omp atomic write
          head(ic) = iat
       end do
-      !$omp end parallel do
 
       ! Pre-allocate neighbor arrays
       call resize(self%nlat, init_size*mol%nat)
 
       ! 3. Triple loop search over nearby cells (O(N) time)
-
-      !$omp parallel default(none) &
-      !$omp shared(self, mol, min_xyz, max_xyz, img, cell_w, nxt, head, trans, cutoff2, n_xyz) &
-      !$omp private(iat, jat, itr, ic, jc, ix, iy, iz, jx, jy, jz, di, dj, dk, r2, vec)
-
-      !$omp do schedule(runtime)
       do iat = 1, mol%nat
          self%inl(iat) = img
 
@@ -270,21 +258,15 @@ contains
       allocate(head(product(n_xyz)), source=0)
       allocate(nxt(mol%nat), source=0)
 
-      !$omp parallel do default(none) &
-      !$omp shared(mol, cell_w, min_xyz, max_xyz, n_xyz, nxt, head) &
-      !$omp private(iat, ix, iy, iz, ic) schedule(runtime)
       do iat = 1, mol%nat
          ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
          iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
          iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
 
          ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
-         !$omp atomic write
          nxt(iat) = head(ic)
-         !$omp atomic write
          head(ic) = iat
       end do
-      !$omp end parallel do
 
       ! Pre-allocate neighbor arrays
       call resize(self%nlat, init_size*mol%nat)
@@ -293,15 +275,6 @@ contains
       allocate(self%tridx(ntr, init_size*mol%nat))
 
       ! 3. Triple loop search over nearby cells (O(N) time)
-
-      !$omp parallel default(none) &
-      !$omp shared(self, mol, min_xyz, max_xyz, ntr, img, cell_w, nxt, head, cutoff2, n_xyz) &
-      !$omp shared(dist, tridx_loc, mask, list) &
-      !$omp private(iat, jat, itr, ic, jc, iws, img_loc) &
-      !$omp private(ix, iy, iz, jx, jy, jz, di, dj, dk, r2, vec, pos, nimg)
-
-      !$omp do schedule(runtime)
-
       do iat = 1, mol%nat
          self%inl(iat) = img
 
@@ -388,8 +361,6 @@ contains
                end do; end do; end do
          self%nnl(iat) = img - self%inl(iat)
       end do
-      !$omp end do
-      !$omp end parallel
 
       ! Cleanup and final sizing
       if (allocated(head)) deallocate(head)
