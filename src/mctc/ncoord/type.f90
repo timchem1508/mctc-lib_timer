@@ -113,7 +113,7 @@ contains
    end subroutine get_cn
 
    !> Geometric fractional coordination number
-   subroutine get_coordination_number(self, mol, trans, cn, dcndr, dcndL, list)
+   subroutine get_coordination_number(self, mol, trans, cn, dcndr, dcndL, list, dcndrlistij, dcndrlistji, dcndrdiag)
 
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -129,6 +129,7 @@ contains
 
       !> Derivative of the CN with respect to the Cartesian coordinates.
       real(wp), intent(out), optional :: dcndr(:, :, :)
+      
 
       !> Derivative of the CN with respect to strain deformations.
       real(wp), intent(out), optional :: dcndL(:, :, :)
@@ -136,11 +137,15 @@ contains
       !> Adjacency list for neighbourlist-based CN evaluation
       type(adjacency_list), intent(in), optional :: list
 
+      !> Derivative of the CN with respect to the Cartesian coordinates.
+      real(wp), intent(out), optional :: dcndrlistij(:, :), dcndrlistji(:, :), dcndrdiag(:, :)
+
 
 
       if (present(list)) then
-         if (present(dcndr) .and. present(dcndL)) then
-            call ncoord_d_list(self, mol, trans, cn, dcndr, dcndL, list)
+         if (present(dcndrlistij) .and. present(dcndrlistji) &
+            & .and. present(dcndrdiag) .and. present(dcndL)) then
+            call ncoord_d_list(self, mol, trans, cn, dcndrlistij, dcndrlistji, dcndrdiag, dcndL, list)
          else
             call ncoord_list(self, mol, trans, cn, list)
          end if
@@ -354,7 +359,7 @@ contains
 
    end subroutine ncoord_d
 
-   subroutine ncoord_d_list(self, mol, trans, cn, dcndr, dcndL, list)
+   subroutine ncoord_d_list(self, mol, trans, cn, dcndrlistij, dcndrlistji, dcndrdiag, dcndL, list)
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
       !> Molecular structure data
@@ -364,7 +369,7 @@ contains
       !> Error function coordination number.
       real(wp), intent(out) :: cn(:)
       !> Derivative of the CN with respect to the Cartesian coordinates.
-      real(wp), intent(out) :: dcndr(:, :, :)
+      real(wp), intent(out) :: dcndrlistij(:, :), dcndrlistji(:, :), dcndrdiag(:, :)
       !> Derivative of the CN with respect to strain deformations.
       real(wp), intent(out) :: dcndL(:, :, :)
       !> Adjacency list for neighbourlist-based CN evaluation
@@ -375,19 +380,24 @@ contains
 
       ! Thread-private arrays for reduction
       real(wp), allocatable :: cn_local(:)
-      real(wp), allocatable :: dcndr_local(:, :, :), dcndL_local(:, :, :)
+      real(wp), allocatable :: dcndrdiag_local(:, :),  dcndL_local(:, :, :)
+      real(wp), allocatable :: dcndrlistij_local(:, :), dcndrlistji_local(:, :)
 
       cn(:) = 0.0_wp
-      dcndr(:, :, :) = 0.0_wp
+      dcndrlistij(:, :)  = 0.0_wp
+      dcndrlistji(:, :)  = 0.0_wp
+      dcndrdiag(:, :)  = 0.0_wp
       dcndL(:, :, :) = 0.0_wp
       cutoff2 = self%cutoff**2
 
       !$omp parallel default(none) &
-      !$omp shared(self, mol, list, trans, cutoff2, cn, dcndr, dcndL) &
+      !$omp shared(self, mol, list, trans, cutoff2, cn, dcndrlist, dcndrdiag, dcndL) &
       !$omp private(jat, kat, itr, izp, jzp, r2, rij, r1, den, countf, countd) &
-      !$omp private(sigma, cn_local, dcndr_local, dcndL_local)
+      !$omp private(sigma, cn_local, dcndrlistij_local, dcndrlistji_local, dcndrdiag_local, dcndL_local)
       allocate(cn_local, source=cn)
-      allocate(dcndr_local, source=dcndr)
+      allocate(dcndrlistij_local, source=dcndrlistij)
+      allocate(dcndrlistji_local, source=dcndrlistji)
+      allocate(dcndrdiag_local, source=dcndrdiag)
       allocate(dcndL_local, source=dcndL)
       !$omp do schedule(runtime)
       do iat = 1, mol%nat
@@ -411,11 +421,14 @@ contains
                   cn_local(jat) = cn_local(jat) + countf * self%directed_factor
                end if
 
-               dcndr_local(:, iat, iat) = dcndr_local(:, iat, iat) + countd
-               dcndr_local(:, jat, jat) = dcndr_local(:, jat, jat) - countd * self%directed_factor
-               dcndr_local(:, iat, jat) = dcndr_local(:, iat, jat) + countd * self%directed_factor
-               dcndr_local(:, jat, iat) = dcndr_local(:, jat, iat) - countd
+               ! store off-diagonal block (iat,jat)
+               dcndrlistij_local(:, kat) = dcndrlistij_local(:, kat) + countd * self%directed_factor
+               dcndrlistji_local(:, kat) = dcndrlistji_local(:, kat) - countd
 
+               ! accumulate diagonals
+               dcndrdiag_local(:,iat) = dcndrdiag_local(:,iat) + countd
+               dcndrdiag_local(:,jat) = dcndrdiag_local(:,jat) - countd * self%directed_factor
+                
                sigma = spread(countd, 1, 3) * spread(rij, 2, 3)
 
                dcndL_local(:, :, iat) = dcndL_local(:, :, iat) + sigma
@@ -428,11 +441,13 @@ contains
       end do
       !$omp end do
       !$omp critical (ncoord_d_list_)
-      cn(:) = cn(:) + cn_local(:)
-      dcndr(:, :, :) = dcndr(:, :, :) + dcndr_local(:, :, :)
-      dcndL(:, :, :) = dcndL(:, :, :) + dcndL_local(:, :, :)
+      cn(:)            = cn(:)            + cn_local(:)
+      dcndrlistij(:, :)  = dcndrlistij(:, :)  + dcndrlistij_local(:, :)
+      dcndrlistji(:, :)  = dcndrlistji(:, :)  + dcndrlistji_local(:, :)
+      dcndrdiag(:, :)  = dcndrdiag(:, :)  + dcndrdiag_local(:, :)
+      dcndL(:, :, :)   = dcndL(:, :, :)   + dcndL_local(:, :, :)
       !$omp end critical (ncoord_d_list_)
-      deallocate(cn_local, dcndr_local, dcndL_local)
+      deallocate(cn_local, dcndrlistij_local, dcndrlistji_local, dcndrdiag_local, dcndL_local)
       !$omp end parallel
 
    end subroutine ncoord_d_list
