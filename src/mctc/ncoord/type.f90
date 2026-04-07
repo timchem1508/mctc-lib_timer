@@ -27,7 +27,7 @@ module mctc_ncoord_type
       !> Radial cutoff for the coordination number
       real(wp)  :: cutoff
       !> Steepness of counting function
-      real(wp)  :: kcn 
+      real(wp)  :: kcn
       !> Factor determining whether the CN is evaluated with direction
       !> if +1 the CN contribution is added equally to both partners
       !> if -1 (i.e. with the EN-dep.) it is added to one and subtracted from the other
@@ -113,7 +113,7 @@ contains
    end subroutine get_cn
 
    !> Geometric fractional coordination number
-   subroutine get_coordination_number(self, mol, trans, cn, dcndr, dcndL, list, dcndrlistij, dcndrlistji, dcndrdiag)
+   subroutine get_coordination_number(self, mol, trans, cn, dcndr, dcndL, list, dcndrij, dcndrji, dcndrdiag)
 
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -129,7 +129,7 @@ contains
 
       !> Derivative of the CN with respect to the Cartesian coordinates.
       real(wp), intent(out), optional :: dcndr(:, :, :)
-      
+
 
       !> Derivative of the CN with respect to strain deformations.
       real(wp), intent(out), optional :: dcndL(:, :, :)
@@ -138,18 +138,18 @@ contains
       type(adjacency_list), intent(in), optional :: list
 
       !> Derivative of the CN with respect to the Cartesian coordinates.
-      real(wp), intent(out), optional :: dcndrlistij(:, :), dcndrlistji(:, :), dcndrdiag(:, :)
+      real(wp), intent(out), optional :: dcndrij(:, :), dcndrji(:, :), dcndrdiag(:, :)
 
 
 
       if (present(list)) then
-         if (present(dcndrlistij) .and. present(dcndrlistji) &
-            & .and. present(dcndrdiag) .and. present(dcndL)) then
-            call ncoord_d_list(self, mol, trans, cn, dcndrlistij, dcndrlistji, dcndrdiag, dcndL, list)
+         if (present(dcndrij) .and. present(dcndrji) &
+         & .and. present(dcndrdiag) .and. present(dcndL)) then
+            call ncoord_d_list(self, mol, trans, cn, dcndrij, dcndrji, dcndrdiag, dcndL, list)
          else
             call ncoord_list(self, mol, trans, cn, list)
          end if
-      else 
+      else
          if (present(dcndr) .and. present(dcndL)) then
             call ncoord_d(self, mol, trans, cn, dcndr, dcndL)
          else
@@ -359,7 +359,7 @@ contains
 
    end subroutine ncoord_d
 
-   subroutine ncoord_d_list(self, mol, trans, cn, dcndrlistij, dcndrlistji, dcndrdiag, dcndL, list)
+   subroutine ncoord_d_list(self, mol, trans, cn, dcndrij, dcndrji, dcndrdiag, dcndL, list)
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
       !> Molecular structure data
@@ -369,7 +369,7 @@ contains
       !> Error function coordination number.
       real(wp), intent(out) :: cn(:)
       !> Derivative of the CN with respect to the Cartesian coordinates.
-      real(wp), intent(out) :: dcndrlistij(:, :), dcndrlistji(:, :), dcndrdiag(:, :)
+      real(wp), intent(out) :: dcndrij(:, :), dcndrji(:, :), dcndrdiag(:, :)
       !> Derivative of the CN with respect to strain deformations.
       real(wp), intent(out) :: dcndL(:, :, :)
       !> Adjacency list for neighbourlist-based CN evaluation
@@ -384,19 +384,19 @@ contains
       real(wp), allocatable :: dcndrlistij_local(:, :), dcndrlistji_local(:, :)
 
       cn(:) = 0.0_wp
-      dcndrlistij(:, :)  = 0.0_wp
-      dcndrlistji(:, :)  = 0.0_wp
+      dcndrij(:, :)  = 0.0_wp
+      dcndrji(:, :)  = 0.0_wp
       dcndrdiag(:, :)  = 0.0_wp
       dcndL(:, :, :) = 0.0_wp
       cutoff2 = self%cutoff**2
 
       !$omp parallel default(none) &
-      !$omp shared(self, mol, list, trans, cutoff2, cn, dcndrlist, dcndrdiag, dcndL) &
+      !$omp shared(self, mol, list, trans, cutoff2, cn, dcndrij, dcndrji, dcndrdiag, dcndL) &
       !$omp private(jat, kat, itr, izp, jzp, r2, rij, r1, den, countf, countd) &
       !$omp private(sigma, cn_local, dcndrlistij_local, dcndrlistji_local, dcndrdiag_local, dcndL_local)
       allocate(cn_local, source=cn)
-      allocate(dcndrlistij_local, source=dcndrlistij)
-      allocate(dcndrlistji_local, source=dcndrlistji)
+      allocate(dcndrlistij_local, source=dcndrij)
+      allocate(dcndrlistji_local, source=dcndrji)
       allocate(dcndrdiag_local, source=dcndrdiag)
       allocate(dcndL_local, source=dcndL)
       !$omp do schedule(runtime)
@@ -428,7 +428,7 @@ contains
                ! accumulate diagonals
                dcndrdiag_local(:,iat) = dcndrdiag_local(:,iat) + countd
                dcndrdiag_local(:,jat) = dcndrdiag_local(:,jat) - countd * self%directed_factor
-                
+
                sigma = spread(countd, 1, 3) * spread(rij, 2, 3)
 
                dcndL_local(:, :, iat) = dcndL_local(:, :, iat) + sigma
@@ -442,8 +442,8 @@ contains
       !$omp end do
       !$omp critical (ncoord_d_list_)
       cn(:)            = cn(:)            + cn_local(:)
-      dcndrlistij(:, :)  = dcndrlistij(:, :)  + dcndrlistij_local(:, :)
-      dcndrlistji(:, :)  = dcndrlistji(:, :)  + dcndrlistji_local(:, :)
+      dcndrij(:, :)  = dcndrij(:, :)  + dcndrlistij_local(:, :)
+      dcndrji(:, :)  = dcndrji(:, :)  + dcndrlistji_local(:, :)
       dcndrdiag(:, :)  = dcndrdiag(:, :)  + dcndrdiag_local(:, :)
       dcndL(:, :, :)   = dcndL(:, :, :)   + dcndL_local(:, :, :)
       !$omp end critical (ncoord_d_list_)
@@ -460,26 +460,26 @@ contains
 
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
-   
+
       !> Lattice points
       real(wp), intent(in) :: trans(:, :)
-   
+
       !> Derivative of expression with respect to the coordination number
       real(wp), intent(in) :: dEdcn(:)
-   
+
       !> Derivative of the CN with respect to the Cartesian coordinates
       real(wp), intent(inout) :: gradient(:, :)
-   
+
       !> Derivative of the CN with respect to strain deformations
       real(wp), intent(inout) :: sigma(:, :)
-   
+
       integer :: iat, jat, izp, jzp, itr
       real(wp) :: r2, r1, rij(3), countd(3), ds(3, 3), cutoff2, den
 
       ! Thread-private arrays for reduction
       ! Set to zero explicitly as the shared variants are potentially non-zero (inout)
       real(wp), allocatable :: gradient_local(:, :), sigma_local(:, :)
-   
+
       cutoff2 = self%cutoff**2
 
       !$omp parallel default(none) &
@@ -504,15 +504,15 @@ contains
                countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
 
                gradient_local(:, iat) = gradient_local(:, iat) + countd &
-                  & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
+               & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
                gradient_local(:, jat) = gradient_local(:, jat) - countd &
-                  & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
-   
+               & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
+
                ds = spread(countd, 1, 3) * spread(rij, 2, 3)
-   
+
                sigma_local(:, :) = sigma_local(:, :) &
-                  & + ds * (dEdcn(iat) + &
-                  & merge(dEdcn(jat) * self%directed_factor, 0.0_wp, jat /= iat))
+               & + ds * (dEdcn(iat) + &
+               & merge(dEdcn(jat) * self%directed_factor, 0.0_wp, jat /= iat))
             end do
          end do
       end do
@@ -533,29 +533,29 @@ contains
 
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
-   
+
       !> Lattice points
       real(wp), intent(in) :: trans(:, :)
-   
+
       !> Derivative of expression with respect to the coordination number
       real(wp), intent(in) :: dEdcn(:)
-   
+
       !> Derivative of the CN with respect to the Cartesian coordinates
       real(wp), intent(inout) :: gradient(:, :)
-   
+
       !> Derivative of the CN with respect to strain deformations
       real(wp), intent(inout) :: sigma(:, :)
 
       !> Adjacency list for neighbourlist-based CN evaluation
       type(adjacency_list), intent(in) :: list
-   
+
       integer :: iat, jat, kat, izp, jzp, itr
       real(wp) :: r2, r1, rij(3), countd(3), ds(3, 3), cutoff2, den
 
       ! Thread-private arrays for reduction
       ! Set to zero explicitly as the shared variants are potentially non-zero (inout)
       real(wp), allocatable :: gradient_local(:, :), sigma_local(:, :)
-   
+
       cutoff2 = self%cutoff**2
 
       !$omp parallel default(none) &
@@ -581,15 +581,15 @@ contains
                countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
 
                gradient_local(:, iat) = gradient_local(:, iat) + countd &
-                  & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
+               & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
                gradient_local(:, jat) = gradient_local(:, jat) - countd &
-                  & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
-   
+               & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
+
                ds = spread(countd, 1, 3) * spread(rij, 2, 3)
-   
+
                sigma_local(:, :) = sigma_local(:, :) &
-                  & + ds * (dEdcn(iat) + &
-                  & merge(dEdcn(jat) * self%directed_factor, 0.0_wp, jat /= iat))
+               & + ds * (dEdcn(iat) + &
+               & merge(dEdcn(jat) * self%directed_factor, 0.0_wp, jat /= iat))
             end do
          end do
       end do
@@ -616,7 +616,7 @@ contains
       real(wp) :: en_factor
 
       en_factor = 1.0_wp
-      
+
    end function get_en_factor
 
 
