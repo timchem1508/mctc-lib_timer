@@ -49,6 +49,8 @@ module mctc_ncoord_type
       procedure :: add_coordination_number_derivs
       !> Add CN derivative of an arbitrary function using the neighbour list
       procedure :: add_coordination_number_derivs_list
+      !> Add CN derivative of an arbitrary function using the neighbour list with support of the wsc
+      procedure :: add_coordination_number_derivs_list_wsc
       !> Evaluates the counting function (exp, dexp, erf, ...)
       procedure(ncoord_count),  deferred :: ncoord_count
       !> Evaluates the derivative of the counting function (exp, dexp, erf, ...)
@@ -609,6 +611,82 @@ contains
       !$omp end parallel
 
    end subroutine add_coordination_number_derivs_list
+
+   subroutine add_coordination_number_derivs_list_wsc(self, mol, trans, dEdcn, gradient, sigma, list)
+
+      class(ncoord_type), intent(in) :: self
+      type(structure_type), intent(in) :: mol
+      real(wp), intent(in) :: trans(:, :)
+      real(wp), intent(in) :: dEdcn(:)
+      real(wp), intent(inout) :: gradient(:, :)
+      real(wp), intent(inout) :: sigma(:, :)
+      type(adjacency_list), intent(in) :: list
+
+      integer :: iat, jat, kat, izp, jzp, img_idx, itr
+      real(wp) :: r2, r1, rij(3), countd(3), ds(3, 3), den, fac, wsw
+      real(wp), allocatable :: gradient_local(:, :), sigma_local(:, :)
+
+      !$omp parallel default(none) &
+      !$omp shared(self, mol, list, dEdcn, gradient, sigma) &
+      !$omp private(iat, jat, kat, img_idx, itr, izp, jzp, r2, r1, rij, countd, ds, den, fac, wsw) &
+      !$omp private(gradient_local, sigma_local)
+
+      allocate(gradient_local(size(gradient, 1), size(gradient, 2)), source=0.0_wp)
+      allocate(sigma_local(size(sigma, 1), size(sigma, 2)), source=0.0_wp)
+
+      !$omp do schedule(runtime)
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+
+         ! 1. Loop over the neighbors found by generate_3d
+         do kat = list%inl(iat) + 1, list%inl(iat) + list%nnl(iat)
+            jat = list%nlat(kat)
+            jzp = mol%id(jat)
+            den = self%get_en_factor(izp, jzp)
+
+            ! Weight for equivalent images (Wigner-Seitz boundary cases)
+            wsw = 1.0_wp / real(list%nimg(kat), wp)
+
+            ! 2. Loop ONLY over the translations stored in the list for this pair
+            do img_idx = 1, list%nimg(kat)
+               itr = list%tridx(img_idx, kat)
+
+               ! rij = R_iat - (R_jat + T)
+               ! Note: generate_3d uses: vec = R_iat - R_jat - trans
+               rij = mol%xyz(:, iat) - mol%xyz(:, jat) - list%trans(:, itr)
+
+               r2 = sum(rij**2)
+               if (r2 < 1.0e-12_wp) cycle ! Safety for T=0 self-interaction
+               r1 = sqrt(r2)
+
+               ! Derivative of CN w.r.t distance
+               countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
+
+               ! Chain rule factor: dE/dCN
+               fac = dEdcn(iat) + merge(dEdcn(jat) * self%directed_factor, 0.0_wp, iat /= jat)
+
+               ! Apply weight and update local arrays
+               ! Gradient: dE/dR
+               gradient_local(:, iat) = gradient_local(:, iat) + (wsw * fac) * countd
+               gradient_local(:, jat) = gradient_local(:, jat) - (wsw * fac) * countd
+
+               ! Virial/Stress: rij (outer product) dE/drij
+               ds = spread(countd, 1, 3) * spread(rij, 2, 3)
+               sigma_local(:, :) = sigma_local(:, :) + (wsw * fac) * ds
+            end do
+         end do
+      end do
+      !$omp end do
+
+      !$omp critical (reduction_add_cn)
+      gradient(:, :) = gradient(:, :) + gradient_local(:, :)
+      sigma(:, :) = sigma(:, :) + sigma_local(:, :)
+      !$omp end critical (reduction_add_cn)
+
+      deallocate(gradient_local, sigma_local)
+      !$omp end parallel
+
+   end subroutine add_coordination_number_derivs_list_wsc
 
 
    !> Evaluates pairwise electronegativity factor if non applies
