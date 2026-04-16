@@ -370,9 +370,7 @@ contains
                         if (size(self%nlat) < img) call resize(self%nlat)
                         if (size(self%nltr) < img) call resize(self%nltr)
                         if (size(self%nimg) < img) call resize(self%nimg)
-                        if (jat == iat) then
-                           if (size(self%selfnimg) < iat) call resize(self%selfnimg)
-                        end if
+                        if (size(self%tridx, 2) < img) call resize(self%tridx, img)
 
                         ! Fix: Map to 1D structural definitions
                         self%nlat(img) = jat
