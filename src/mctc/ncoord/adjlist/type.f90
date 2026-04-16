@@ -46,7 +46,7 @@
 !> two arrays are used for clarity.
 
 module mctc_ncoord_adjlist_type
-   use iso_fortran_env, only : int64
+use iso_fortran_env, only : int64
    use mctc_env, only : wp
    use mctc_io, only : structure_type
    use mctc_io_resize, only : resize
@@ -76,6 +76,8 @@ module mctc_ncoord_adjlist_type
       !> Wiegner-Seitz cell parameters
       integer :: nimg_max
       integer, allocatable :: nimg(:)
+      integer, allocatable :: selfnimg(:)
+      integer, allocatable :: selftridx(:, :)
       integer, allocatable :: tridx(:, :)
    end type adjacency_list
 
@@ -98,35 +100,35 @@ module mctc_ncoord_adjlist_type
 contains
 
    !> Create new neighbourlist for a given geometry and cutoff
-   subroutine new_adjacency_list(self, mol, cutoff, complete)
-      type(adjacency_list), intent(out) :: self
-      type(structure_type), intent(in) :: mol
-      real(wp), intent(in), optional :: cutoff
-      logical, intent(in), optional :: complete
+	subroutine new_adjacency_list(self, mol, cutoff, complete)
+	   type(adjacency_list), intent(out) :: self
+	   type(structure_type), intent(in) :: mol
+	   real(wp), intent(in), optional :: cutoff
+	   logical, intent(in), optional :: complete
 
-      allocate(self%cutoff)
-      if (present(cutoff)) then
-         self%cutoff = cutoff
-      else
-         self%cutoff = cutoff_def
-      end if
+	   allocate(self%cutoff)
+	   if (present(cutoff)) then
+	      self%cutoff = cutoff
+	   else
+	      self%cutoff = cutoff_def
+	   end if
 
-      allocate(self%complete)
-      if (present(complete)) then
-         self%complete = complete
-      else
-         self%complete = complete_def
-      end if
+	   allocate(self%complete)
+	   if (present(complete)) then
+	      self%complete = complete
+	   else
+	      self%complete = complete_def
+	   end if
 
-      allocate(self%inl(mol%nat), source=0)
-      allocate(self%nnl(mol%nat), source=0)
+	   allocate(self%inl(mol%nat), source=0)
+	   allocate(self%nnl(mol%nat), source=0)
 
-      if (any(mol%periodic)) then
-         call generate_3d(self, mol)
-      else
-         call generate_0d(self, mol)
-      end if
-   end subroutine new_adjacency_list
+	   if (any(mol%periodic)) then
+	      call generate_3d(self, mol)
+	   else
+	      call generate_0d(self, mol)
+	   end if
+	end subroutine new_adjacency_list
 
    subroutine generate_0d(self, mol)
       !> Instance of the neighbourlist
@@ -151,14 +153,14 @@ contains
       ! We add a small buffer to the bounding box to ensure all atoms are contained
       min_xyz = minval(mol%xyz, dim=2) - buffer
       max_xyz = maxval(mol%xyz, dim=2) + buffer
-
+      
       ! Force the cell width to be at least 60.0 to prevent massive empty grids
-      min_cell_width = max(self%cutoff + eps, grid_def * maxval(max_xyz - min_xyz))
+	   min_cell_width = self%cutoff + eps
 
       ! Number of cells: must be at least 1, and cell width >= cutoff
       n_xyz = max(1, floor((max_xyz - min_xyz) / (min_cell_width + eps)))
       cell_w = (max_xyz - min_xyz) / (real(n_xyz, wp) + eps) + eps
-
+      
       n_cells = int(n_xyz(1), int64) * int(n_xyz(2), int64) * int(n_xyz(3), int64)
 
       if (n_cells > 2147483647_int64) then
@@ -167,7 +169,7 @@ contains
          stop 1
       end if
 
-      allocate(head(n_cells), source=0)
+	   allocate(head(n_cells), source=0)
 
       ! 2. Build the Linked List
       allocate(nxt(mol%nat), source=0)
@@ -291,6 +293,8 @@ contains
       call resize(self%nlat, init_size*mol%nat)
       call resize(self%nltr, init_size*mol%nat)
       call resize(self%nimg, init_size*mol%nat)
+      call resize(self%selfnimg, mol%nat)
+      allocate(self%selftridx(ntr, mol%nat))
       allocate(self%tridx(ntr, init_size*mol%nat))
 
       ! 3. Triple loop search over nearby cells (O(N) time)
@@ -367,12 +371,17 @@ contains
                         if (size(self%nlat) < img) call resize(self%nlat)
                         if (size(self%nltr) < img) call resize(self%nltr)
                         if (size(self%nimg) < img) call resize(self%nimg)
+                        if (jat == iat) then
+                           if (size(self%selfnimg) < iat) call resize(self%selfnimg)
+                        end if
 
                         ! Fix: Map to 1D structural definitions
                         self%nlat(img) = jat
                         self%nltr(img) = list(1)
                         self%nimg(img) = nimg
+                        if (jat == iat) self%selfnimg(iat) = nimg
                         self%tridx(1:nimg, img) = list(1:nimg)
+                        if (jat == iat) self%selftridx(1:nimg, iat) = list(1:nimg)
                      end if
 
                      jat = nxt(jat)
