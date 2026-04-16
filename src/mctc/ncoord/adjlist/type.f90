@@ -253,12 +253,7 @@ contains
       integer :: n_xyz(3)
       real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3)
 
-      if (any(mol%periodic)) then
-         call get_lattice_points(mol%periodic, mol%lattice, self%cutoff, self%trans)
-      else
-         allocate(self%trans(3, 1))
-         self%trans = 0.0_wp
-      end if
+      call get_lattice_points(mol%periodic, mol%lattice, thr, self%trans)
 
       ntr = size(self%trans, 2)
       allocate(dist(ntr), mask(ntr), tridx_loc(ntr), list(ntr))
