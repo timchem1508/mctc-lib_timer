@@ -46,7 +46,7 @@
 !> two arrays are used for clarity.
 
 module mctc_ncoord_adjlist_type
-use iso_fortran_env, only : int64
+   use iso_fortran_env, only : int64
    use mctc_env, only : wp
    use mctc_io, only : structure_type
    use mctc_io_resize, only : resize
@@ -100,35 +100,35 @@ use iso_fortran_env, only : int64
 contains
 
    !> Create new neighbourlist for a given geometry and cutoff
-	subroutine new_adjacency_list(self, mol, cutoff, complete)
-	   type(adjacency_list), intent(out) :: self
-	   type(structure_type), intent(in) :: mol
-	   real(wp), intent(in), optional :: cutoff
-	   logical, intent(in), optional :: complete
+   subroutine new_adjacency_list(self, mol, cutoff, complete)
+      type(adjacency_list), intent(out) :: self
+      type(structure_type), intent(in) :: mol
+      real(wp), intent(in), optional :: cutoff
+      logical, intent(in), optional :: complete
 
-	   allocate(self%cutoff)
-	   if (present(cutoff)) then
-	      self%cutoff = cutoff
-	   else
-	      self%cutoff = cutoff_def
-	   end if
+      allocate(self%cutoff)
+      if (present(cutoff)) then
+         self%cutoff = cutoff
+      else
+         self%cutoff = cutoff_def
+      end if
 
-	   allocate(self%complete)
-	   if (present(complete)) then
-	      self%complete = complete
-	   else
-	      self%complete = complete_def
-	   end if
+      allocate(self%complete)
+      if (present(complete)) then
+         self%complete = complete
+      else
+         self%complete = complete_def
+      end if
 
-	   allocate(self%inl(mol%nat), source=0)
-	   allocate(self%nnl(mol%nat), source=0)
+      allocate(self%inl(mol%nat), source=0)
+      allocate(self%nnl(mol%nat), source=0)
 
-	   if (any(mol%periodic)) then
-	      call generate_3d(self, mol)
-	   else
-	      call generate_0d(self, mol)
-	   end if
-	end subroutine new_adjacency_list
+      if (any(mol%periodic)) then
+         call generate_3d(self, mol)
+      else
+         call generate_0d(self, mol)
+      end if
+   end subroutine new_adjacency_list
 
    subroutine generate_0d(self, mol)
       !> Instance of the neighbourlist
@@ -153,14 +153,14 @@ contains
       ! We add a small buffer to the bounding box to ensure all atoms are contained
       min_xyz = minval(mol%xyz, dim=2) - buffer
       max_xyz = maxval(mol%xyz, dim=2) + buffer
-      
+
       ! Force the cell width to be at least 60.0 to prevent massive empty grids
-	   min_cell_width = self%cutoff + eps
+      min_cell_width = self%cutoff + eps
 
       ! Number of cells: must be at least 1, and cell width >= cutoff
       n_xyz = max(1, floor((max_xyz - min_xyz) / (min_cell_width + eps)))
       cell_w = (max_xyz - min_xyz) / (real(n_xyz, wp) + eps) + eps
-      
+
       n_cells = int(n_xyz(1), int64) * int(n_xyz(2), int64) * int(n_xyz(3), int64)
 
       if (n_cells > 2147483647_int64) then
@@ -169,7 +169,7 @@ contains
          stop 1
       end if
 
-	   allocate(head(n_cells), source=0)
+      allocate(head(n_cells), source=0)
 
       ! 2. Build the Linked List
       allocate(nxt(mol%nat), source=0)
@@ -254,14 +254,13 @@ contains
       real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3)
 
       if (any(mol%periodic)) then
-         call get_lattice_points(mol%periodic, mol%lattice, 25.0_wp, self%trans)
+         call get_lattice_points(mol%periodic, mol%lattice, self%cutoff, self%trans)
       else
          allocate(self%trans(3, 1))
          self%trans = 0.0_wp
       end if
 
       ntr = size(self%trans, 2)
-      ! Fix: Properly declare and allocate needed temporary arrays
       allocate(dist(ntr), mask(ntr), tridx_loc(ntr), list(ntr))
 
       img = 0
