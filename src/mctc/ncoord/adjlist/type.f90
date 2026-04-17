@@ -240,7 +240,8 @@ contains
 
    end subroutine generate_0d
 
-!> Generator for neighbourlist using a Linked Cell List approach (O(N) scaling)
+!!> Generator for neighbourlist using a Linked Cell List approach (O(N) scaling)
+   !> Fixed to properly handle Periodic Boundary Conditions via cell-index wrapping.
    subroutine generate_3d(self, mol)
       type(adjacency_list), intent(inout) :: self
       type(structure_type), intent(in) :: mol
@@ -250,11 +251,11 @@ contains
       integer, allocatable :: head(:), nxt(:), list(:), tridx_loc(:)
       real(wp), allocatable :: dist(:)
       logical, allocatable :: mask(:)
-      integer :: n_xyz(3)
+      integer :: n_xyz(3), search_range(3)
       real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3)
 
       if (any(mol%periodic)) then
-         call get_lattice_points(mol%periodic, mol%lattice, thr, self%trans)
+         call get_lattice_points(mol%periodic, mol%lattice, self%cutoff, self%trans)
       else
          allocate(self%trans(3, 1))
          self%trans = 0.0_wp
@@ -271,6 +272,7 @@ contains
       min_xyz = minval(mol%xyz, dim=2) - buffer
       max_xyz = maxval(mol%xyz, dim=2) + buffer
 
+      ! Ensure cell width is at least the cutoff
       n_xyz = max(1, floor((max_xyz - min_xyz) / (self%cutoff + eps)))
       cell_w = (max_xyz - min_xyz) / (real(n_xyz, wp) + eps) + eps
 
@@ -300,6 +302,9 @@ contains
       allocate(self%selftridx(ntr, mol%nat))
       self%selftridx = 0
 
+      ! Determine search range to avoid double-counting if grid is small
+      search_range = merge(1, 0, n_xyz > 1)
+
       ! 3. Triple loop search over nearby cells
       do iat = 1, mol%nat
          self%inl(iat) = img
@@ -308,13 +313,20 @@ contains
          iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
          iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
 
-         do dk = -1, 1; do dj = -1, 1; do di = -1, 1
-                  jx = ix + di; jy = iy + dj; jz = iz + dk
-                  if (jx < 1 .or. jx > n_xyz(1) .or. jy < 1 .or. jy > n_xyz(2) .or. jz < 1 .or. jz > n_xyz(3)) cycle
+         do dk = -search_range(3), search_range(3)
+            do dj = -search_range(2), search_range(2)
+               do di = -search_range(1), search_range(1)
+
+                  ! PERIODIC WRAP: Instead of cycling, we wrap the cell index
+                  jx = mod(ix + di + n_xyz(1) - 1, n_xyz(1)) + 1
+                  jy = mod(iy + dj + n_xyz(2) - 1, n_xyz(2)) + 1
+                  jz = mod(iz + dk + n_xyz(3) - 1, n_xyz(3)) + 1
+
                   jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
                   jat = head(jc)
 
                   do while (jat > 0)
+                     ! Symmetrical optimization
                      if (.not. self%complete .and. jat > iat) then
                         jat = nxt(jat)
                         cycle
@@ -327,7 +339,10 @@ contains
                      do itr = 1, ntr
                         vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
                         r2 = sum(vec**2)
+
+                        ! Use thr for self-interaction, cutoff2 for neighbor boundary
                         if (r2 < thr .or. r2 >= cutoff2) cycle
+
                         img_loc = img_loc + 1
                         dist(img_loc) = r2
                         tridx_loc(img_loc) = itr
@@ -340,6 +355,7 @@ contains
                         mask(pos) = .false.
                         iws = 1
                         list(iws) = tridx_loc(pos)
+
                         if (img_loc > 1) then
                            do
                               pos = minloc(dist(1:img_loc), dim=1, mask=mask(1:img_loc))
@@ -373,7 +389,9 @@ contains
                      end if
                      jat = nxt(jat)
                   end do
-               end do; end do; end do
+               end do
+            end do
+         end do
          self%nnl(iat) = img - self%inl(iat)
       end do
 
