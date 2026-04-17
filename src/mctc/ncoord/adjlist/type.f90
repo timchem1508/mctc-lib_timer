@@ -240,7 +240,7 @@ contains
 
    end subroutine generate_0d
 
-   !> Generator for neighbourlist using a Linked Cell List approach (O(N) scaling)
+!> Generator for neighbourlist using a Linked Cell List approach (O(N) scaling)
    subroutine generate_3d(self, mol)
       type(adjacency_list), intent(inout) :: self
       type(structure_type), intent(in) :: mol
@@ -253,7 +253,12 @@ contains
       integer :: n_xyz(3)
       real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3)
 
-      call get_lattice_points(mol%periodic, mol%lattice, thr, self%trans)
+      if (any(mol%periodic)) then
+         call get_lattice_points(mol%periodic, mol%lattice, thr, self%trans)
+      else
+         allocate(self%trans(3, 1))
+         self%trans = 0.0_wp
+      end if
 
       ntr = size(self%trans, 2)
       allocate(dist(ntr), mask(ntr), tridx_loc(ntr), list(ntr))
@@ -283,15 +288,19 @@ contains
          head(ic) = iat
       end do
 
-      ! Pre-allocate neighbor arrays
+      ! Pre-allocate arrays
       call resize(self%nlat, init_size*mol%nat)
       call resize(self%nltr, init_size*mol%nat)
       call resize(self%nimg, init_size*mol%nat)
-      call resize(self%selfnimg, mol%nat)
-      allocate(self%selftridx(ntr, mol%nat))
       allocate(self%tridx(ntr, init_size*mol%nat))
 
-      ! 3. Triple loop search over nearby cells (O(N) time)
+      ! Initialize diagonal/self arrays
+      allocate(self%selfnimg(mol%nat))
+      self%selfnimg = 0
+      allocate(self%selftridx(ntr, mol%nat))
+      self%selftridx = 0
+
+      ! 3. Triple loop search over nearby cells
       do iat = 1, mol%nat
          self%inl(iat) = img
 
@@ -301,17 +310,11 @@ contains
 
          do dk = -1, 1; do dj = -1, 1; do di = -1, 1
                   jx = ix + di; jy = iy + dj; jz = iz + dk
-
-                  if (jx < 1 .or. jx > n_xyz(1) .or. &
-                     jy < 1 .or. jy > n_xyz(2) .or. &
-                     jz < 1 .or. jz > n_xyz(3)) cycle
-
+                  if (jx < 1 .or. jx > n_xyz(1) .or. jy < 1 .or. jy > n_xyz(2) .or. jz < 1 .or. jz > n_xyz(3)) cycle
                   jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
                   jat = head(jc)
 
                   do while (jat > 0)
-
-                     ! Symmetrical optimization
                      if (.not. self%complete .and. jat > iat) then
                         jat = nxt(jat)
                         cycle
@@ -321,34 +324,26 @@ contains
                      dist(:) = 0.0_wp
                      tridx_loc(:) = 0
 
-                     ! Check all translation images for this atom pair
                      do itr = 1, ntr
                         vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
                         r2 = sum(vec**2)
-
-                        ! Standard distance check and self-interaction exclusion
                         if (r2 < thr .or. r2 >= cutoff2) cycle
-
                         img_loc = img_loc + 1
                         dist(img_loc) = r2
                         tridx_loc(img_loc) = itr
                      end do
 
-                     ! Find equivalent minimum WSC images once distances are gathered
                      if (img_loc /= 0) then
                         mask(1:img_loc) = .true.
                         pos = minloc(dist(1:img_loc), dim=1)
-
                         r2 = dist(pos)
                         mask(pos) = .false.
-
                         iws = 1
                         list(iws) = tridx_loc(pos)
-
                         if (img_loc > 1) then
                            do
                               pos = minloc(dist(1:img_loc), dim=1, mask=mask(1:img_loc))
-                              if (pos == 0) exit ! Fortran failsafe if no true masks remain
+                              if (pos == 0) exit
                               if (abs(dist(pos) - r2) > tol) exit
                               mask(pos) = .false.
                               iws = iws + 1
@@ -360,35 +355,34 @@ contains
                         nimg = iws
                         self%nimg_max = max(nimg, self%nimg_max)
 
-                        img = img + 1
-                        ! Dynamically resize structural arrays
-                        if (size(self%nlat) < img) call resize(self%nlat)
-                        if (size(self%nltr) < img) call resize(self%nltr)
-                        if (size(self%nimg) < img) call resize(self%nimg)
-                        if (size(self%tridx, 2) < img) call resize(self%tridx, img)
+                        if (iat == jat) then
+                           self%selfnimg(iat) = nimg
+                           self%selftridx(1:nimg, iat) = list(1:nimg)
+                        else
+                           img = img + 1
+                           if (size(self%nlat) < img) call resize(self%nlat)
+                           if (size(self%nltr) < img) call resize(self%nltr)
+                           if (size(self%nimg) < img) call resize(self%nimg)
+                           if (size(self%tridx, 2) < img) call resize(self%tridx, img)
 
-                        ! Fix: Map to 1D structural definitions
-                        self%nlat(img) = jat
-                        self%nltr(img) = list(1)
-                        self%nimg(img) = nimg
-                        if (jat == iat) self%selfnimg(iat) = nimg
-                        self%tridx(1:nimg, img) = list(1:nimg)
-                        if (jat == iat) self%selftridx(1:nimg, iat) = list(1:nimg)
+                           self%nlat(img) = jat
+                           self%nltr(img) = list(1)
+                           self%nimg(img) = nimg
+                           self%tridx(1:nimg, img) = list(1:nimg)
+                        end if
                      end if
-
                      jat = nxt(jat)
                   end do
                end do; end do; end do
          self%nnl(iat) = img - self%inl(iat)
       end do
 
-      ! Cleanup and final sizing
       if (allocated(head)) deallocate(head)
       if (allocated(nxt)) deallocate(nxt)
       call resize(self%nlat, img)
       call resize(self%nltr, img)
       call resize(self%nimg, img)
-
+      call resize(self%tridx, img)
    end subroutine generate_3d
 
 end module mctc_ncoord_adjlist_type
