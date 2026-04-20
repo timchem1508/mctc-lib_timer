@@ -130,7 +130,7 @@ contains
       end if
    end subroutine new_adjacency_list
 
-      subroutine generate_0d(self, mol)
+   subroutine generate_0d(self, mol)
       !> Instance of the neighbourlist
       type(adjacency_list), intent(inout) :: self
       !> Molecular structure data
@@ -310,7 +310,7 @@ contains
 
       ! Allocate list to hold the maximum number of possible translations
       allocate(trlist(size(self%trans, 2)))
-      
+
 
       ! 1. Define the grid boundaries and dimensions
       min_xyz = minval(mol%xyz, dim=2) - buffer
@@ -388,7 +388,7 @@ contains
 
                         ! Find ONLY the closest periodic images
                         call get_pairs(nimg, self%trans, vec_base, trlist, cutoff2)
-                        
+
                         ! Update selfnimg but DO NOT increment the cross-interaction `img` counter
                         self%selfnimg(iat) = nimg
                         if (nimg > 0) then
@@ -400,14 +400,14 @@ contains
 
                         ! Find ONLY the closest periodic images
                         call get_pairs(nimg, self%trans, vec_base, trlist, cutoff2)
-                        
+
                         if (nimg > 0) then
                            img = img + 1
                            if (size(self%nlat) < img) call resize(self%nlat)
                            if (size(self%nltr) < img) call resize(self%nltr)
                            if (size(self%nimg) < img) call resize(self%nimg)
                            if (size(self%tridx, 2) < img) call resize(self%tridx, img)
-                           
+
                            self%nlat(img) = jat
                            self%nltr(img) = nimg
                            self%nimg(img) = nimg
@@ -427,7 +427,7 @@ contains
       if (allocated(trlist)) deallocate(trlist)
 
       call resize(self%nlat, img)
-      
+
       if (any(mol%periodic)) then
          call resize(self%nltr, img)
          call resize(self%nimg, img)
