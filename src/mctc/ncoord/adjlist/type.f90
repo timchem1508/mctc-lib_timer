@@ -130,312 +130,328 @@ contains
       end if
    end subroutine new_adjacency_list
 
-   subroutine generate_0d(self, mol)
-      !> Instance of the neighbourlist
-      type(adjacency_list), intent(inout) :: self
-      !> Molecular structure data
-      type(structure_type), intent(in) :: mol
+    !> Generator for neighbourlist using a Linked Cell List approach (O(N) scaling)
+    subroutine generate_0d(self, mol)
+        !> Instance of the neighbourlist
+        type(adjacency_list), intent(inout) :: self
+        !> Molecular structure data
+        type(structure_type), intent(in) :: mol
 
 
-      integer :: iat, jat, itr, img, ic, jc
-      integer :: ix, iy, iz, jx, jy, jz, di, dj, dk
-      integer, allocatable :: head(:), nxt(:)
-      integer :: n_xyz(3)
-      real(wp) :: r2, min_cell_width, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3), trans(3,1)
-      integer(int64) :: n_cells
+         integer :: iat, jat, itr, img, ic, jc
+        integer :: ix, iy, iz, jx, jy, jz, di, dj, dk
+        integer, allocatable :: head(:), nxt(:)
+        integer :: n_xyz(3)
+        real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3)
+        real(wp) :: trans(3, 1) = 0.0_wp
 
-      img = 0
-      cutoff2 = self%cutoff**2
-      trans = 0.0_wp
-      allocate(self%trans, source=trans)
+        self%trans = trans
 
-      ! 1. Define the grid boundaries and dimensions
-      ! We add a small buffer to the bounding box to ensure all atoms are contained
-      min_xyz = minval(mol%xyz, dim=2) - buffer
-      max_xyz = maxval(mol%xyz, dim=2) + buffer
+        img = 0
+        cutoff2 = self%cutoff**2
 
-      ! Force the cell width to be at least 60.0 to prevent massive empty grids
-      min_cell_width = self%cutoff + eps
+        ! 1. Define the grid boundaries and dimensions
+        ! We add a small buffer to the bounding box to ensure all atoms are contained
+        min_xyz = minval(mol%xyz, dim=2) - buffer
+        max_xyz = maxval(mol%xyz, dim=2) + buffer
+        
+        ! Number of cells: must be at least 1, and cell width >= cutoff
+        n_xyz = max(1, floor((max_xyz - min_xyz) / (self%cutoff + eps)))
+        cell_w = (max_xyz - min_xyz) / (real(n_xyz, wp) + eps) + eps
 
-      ! Number of cells: must be at least 1, and cell width >= cutoff
-      n_xyz = max(1, floor((max_xyz - min_xyz) / (min_cell_width + eps)))
-      cell_w = (max_xyz - min_xyz) / (real(n_xyz, wp) + eps) + eps
+        ! 2. Build the Linked List
+        allocate(head(product(n_xyz)), source=0)
+        allocate(nxt(mol%nat), source=0)
+        
+        do iat = 1, mol%nat
+            ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
+            iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
+            iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
+            
+            ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
+            nxt(iat) = head(ic)
+            head(ic) = iat
+        end do
 
-      n_cells = int(n_xyz(1), int64) * int(n_xyz(2), int64) * int(n_xyz(3), int64)
+        ! Pre-allocate neighbor arrays
+        call resize(self%nlat, init_size*mol%nat)
 
-      if (n_cells > 2147483647_int64) then
-         write(*,*) "box params", max_xyz(:) - min_xyz(:)
-         write(*,*) "Error: Bounding box too large. Linked-cell grid exceeds 32-bit integer limit."
-         stop 1
-      end if
+        ! 3. Triple loop search over nearby cells (O(N) time)
+        do iat = 1, mol%nat
+            self%inl(iat) = img
+            
+            ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
+            iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
+            iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
 
-      allocate(head(n_cells), source=0)
+            ! Check 27 neighboring cells (3x3x3 block)
+            do dk = -1, 1; do dj = -1, 1; do di = -1, 1
+                jx = ix + di; jy = iy + dj; jz = iz + dk
+                
+                ! Skip cells outside the defined grid
+                if (jx < 1 .or. jx > n_xyz(1) .or. &
+                    jy < 1 .or. jy > n_xyz(2) .or. &
+                    jz < 1 .or. jz > n_xyz(3)) cycle
+                
+                jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
+                jat = head(jc)
+                
+                do while (jat > 0)
 
-      ! 2. Build the Linked List
-      allocate(nxt(mol%nat), source=0)
+                ! Symmetrical optimization: skip if jat > iat and complete is false
+                if (.not. self%complete .and. jat > iat) then
+                    jat = nxt(jat)
+                    cycle
+                end if
 
-      do iat = 1, mol%nat
-         ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
-         iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
-         iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
+                ! Check all translation images for this atom pair
+                do itr = 1, size(trans, 2)
+                    vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - trans(:, itr)
+                    r2 = sum(vec**2)
+                    
+                    ! Standard distance check and self-interaction exclusion
+                    if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
+                    
+                    img = img + 1
+                    if (size(self%nlat) < img) call resize(self%nlat)
+                    self%nlat(img) = jat
+                end do
+                jat = nxt(jat)
+                end do
+            end do; end do; end do
+            self%nnl(iat) = img - self%inl(iat)
+        end do
 
-         ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
-         nxt(iat) = head(ic)
-         head(ic) = iat
-      end do
+        ! Cleanup and final sizing
+        if (allocated(head)) deallocate(head)
+        if (allocated(nxt)) deallocate(nxt)
+        call resize(self%nlat, img)
 
-      ! Pre-allocate neighbor arrays
-      call resize(self%nlat, init_size*mol%nat)
+    end subroutine generate_0d
 
-      ! 3. Triple loop search over nearby cells (O(N) time)
-      do iat = 1, mol%nat
-         self%inl(iat) = img
+!> Utility to find the shortest distance and its degeneracies across 27 translation images
+    subroutine get_wsc_pairs(trans, rij, iws, list, min_r2, is_self)
+        real(wp), intent(in) :: trans(:, :)
+        real(wp), intent(in) :: rij(3)
+        integer, intent(out) :: iws
+        integer, intent(out) :: list(:)
+        real(wp), intent(out) :: min_r2
+        logical, intent(in) :: is_self
 
-         ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
-         iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
-         iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
+        real(wp) :: vec(3), r2
+        integer :: itr
+        real(wp), parameter :: tol = 0.01_wp
+        real(wp), parameter :: thr = sqrt(epsilon(0.0_wp))
 
-         ! Check 27 neighboring cells (3x3x3 block)
-         do dk = -1, 1; do dj = -1, 1; do di = -1, 1
-                  jx = ix + di; jy = iy + dj; jz = iz + dk
+        iws = 0
+        list(:) = 0
+        min_r2 = huge(1.0_wp)
 
-                  ! Skip cells outside the defined grid
-                  if (jx < 1 .or. jx > n_xyz(1) .or. &
-                     jy < 1 .or. jy > n_xyz(2) .or. &
-                     jz < 1 .or. jz > n_xyz(3)) cycle
+        ! Pass 1: find absolute minimum distance
+        do itr = 1, size(trans, 2)
+            vec(:) = rij - trans(:, itr)
+            r2 = vec(1)**2 + vec(2)**2 + vec(3)**2
+            
+            ! If computing self-interactions, ignore the central 0-translation image 
+            ! to enforce finding the first actual periodic interaction
+            if (is_self .and. r2 < thr) cycle
+            
+            if (r2 < min_r2) min_r2 = r2
+        end do
 
-                  jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
-                  jat = head(jc)
+        ! Pass 2: map all degeneracies falling within the tolerance
+        do itr = 1, size(trans, 2)
+            vec(:) = rij - trans(:, itr)
+            r2 = vec(1)**2 + vec(2)**2 + vec(3)**2
+            
+            if (is_self .and. r2 < thr) cycle
+            
+            if (abs(r2 - min_r2) <= tol) then
+                iws = iws + 1
+                list(iws) = itr
+            end if
+        end do
+    end subroutine get_wsc_pairs
 
-                  do while (jat > 0)
+!> Generator for neighbourlist using a Linked Cell List approach for Periodic Systems
+    subroutine generate_3d(self, mol)
+        !> Instance of the neighbourlist
+        type(adjacency_list), intent(inout) :: self
+        !> Molecular structure data
+        type(structure_type), intent(in) :: mol
 
-                     ! Symmetrical optimization: skip if jat > iat and complete is false
-                     if (.not. self%complete .and. jat > iat) then
-                        jat = nxt(jat)
-                        cycle
-                     end if
+        integer :: iat, jat, img, ic, jc, i
+        integer :: ix, iy, iz, jx, jy, jz, di, dj, dk
+        integer, allocatable :: head(:), nxt(:)
+        logical, allocatable :: checked(:)
+        
+        integer :: n_xyz(3), ntr, nimg_count
+        integer :: tridx_arr(27)
+        real(wp) :: cutoff2, r2_min
+        real(wp) :: lat_inv(3, 3), det, L_vec
+        real(wp) :: fract(3), xyz_wrap(3, mol%nat)
+        real(wp), allocatable :: trans(:, :)
+        real(wp) :: vec(3)
+        integer, allocatable :: tmp_nimg(:), tmp_tridx(:,:)
 
-                     do itr = 1, size(self%trans, 2)
-                        vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
-                        r2 = sum(vec**2)
+        ! 1. Get 27 translation vectors for the "jacket" around the central cell
+        call get_lattice_points(mol%periodic, mol%lattice, sqrt(epsilon(0.0_wp)), trans)
+        ntr = size(trans, 2)
+        
+        if (allocated(self%trans)) deallocate(self%trans)
+        allocate(self%trans(3, ntr))
+        self%trans = trans
 
-                        ! Standard distance check and self-interaction exclusion
-                        if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
+        cutoff2 = self%cutoff**2
+        img = 0
+        self%nimg_max = 0
 
-                        img = img + 1
-                        if (size(self%nlat) < img) call resize(self%nlat)
-                        self%nlat(img) = jat
-                     end do
-                     jat = nxt(jat)
-                  end do
-               end do; end do; end do
-         self%nnl(iat) = img - self%inl(iat)
-      end do
+        ! 2. Compute the inverse of the lattice matrix to map Cartesian to Fractional
+        det = mol%lattice(1,1)*(mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) - &
+              mol%lattice(1,2)*(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) + &
+              mol%lattice(1,3)*(mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1))
 
-      ! Cleanup and final sizing
-      if (allocated(head)) deallocate(head)
-      if (allocated(nxt)) deallocate(nxt)
-      call resize(self%nlat, img)
+        lat_inv(1,1) =  (mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) / det
+        lat_inv(1,2) = -(mol%lattice(1,2)*mol%lattice(3,3) - mol%lattice(1,3)*mol%lattice(3,2)) / det
+        lat_inv(1,3) =  (mol%lattice(1,2)*mol%lattice(2,3) - mol%lattice(1,3)*mol%lattice(2,2)) / det
+        lat_inv(2,1) = -(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) / det
+        lat_inv(2,2) =  (mol%lattice(1,1)*mol%lattice(3,3) - mol%lattice(1,3)*mol%lattice(3,1)) / det
+        lat_inv(2,3) = -(mol%lattice(1,1)*mol%lattice(2,3) - mol%lattice(1,3)*mol%lattice(2,1)) / det
+        lat_inv(3,1) =  (mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1)) / det
+        lat_inv(3,2) = -(mol%lattice(1,1)*mol%lattice(3,2) - mol%lattice(1,2)*mol%lattice(3,1)) / det
+        lat_inv(3,3) =  (mol%lattice(1,1)*mol%lattice(2,2) - mol%lattice(1,2)*mol%lattice(2,1)) / det
 
+        ! 3. Grid dimensions: force cell width to be a half-lattice parameter divided by a natural number.
+        ! This mathematically requires n_xyz to be an even integer.
+        do i = 1, 3
+            L_vec = sqrt(sum(mol%lattice(:, i)**2))
+            n_xyz(i) = max(2, ceiling(L_vec / self%cutoff))
+            if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
+        end do
 
-   end subroutine generate_0d
+        ! 4. Wrap atoms into the central crystallographic cell and build Linked List
+        allocate(head(product(n_xyz)), source=0)
+        allocate(nxt(mol%nat), source=0)
+        allocate(checked(mol%nat), source=.false.)
 
-   subroutine get_pairs(iws, trans, rij, list, cutoff2)
-      integer, intent(out) :: iws
-      real(wp), intent(in) :: rij(3)
-      real(wp), intent(in) :: trans(:, :)
-      integer, intent(out) :: list(:)
-      real(wp), intent(in) :: cutoff2
+        do iat = 1, mol%nat
+            fract(:) = matmul(lat_inv, mol%xyz(:, iat))
+            fract(:) = fract(:) - floor(fract(:)) ! Wrap to [0, 1)
+            xyz_wrap(:, iat) = matmul(mol%lattice, fract) ! Wrapped Cartesian
 
-      logical :: mask(size(list))
-      real(wp) :: dist(size(list)), vec(3), r2
-      integer :: itr, img, pos
+            ix = min(n_xyz(1), max(1, int(fract(1) * n_xyz(1)) + 1))
+            iy = min(n_xyz(2), max(1, int(fract(2) * n_xyz(2)) + 1))
+            iz = min(n_xyz(3), max(1, int(fract(3) * n_xyz(3)) + 1))
 
-      iws = 0
-      img = 0
-      list(:) = 0
-      mask(:) = .true.
+            ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
+            nxt(iat) = head(ic)
+            head(ic) = iat
+        end do
 
-      do itr = 1, size(trans, 2)
-         vec(:) = rij - trans(:, itr)
-         r2 = vec(1)**2 + vec(2)**2 + vec(3)**2
-         if (r2 < thr .or. r2 > cutoff2) cycle
-         img = img + 1
-         dist(img) = r2
-      end do
+        ! Pre-allocate dynamic and fixed arrays
+        call resize(self%nlat, mol%nat * 50) 
+        allocate(self%nimg(size(self%nlat)), source=0)
+        allocate(self%tridx(ntr, size(self%nlat)), source=0)
+        allocate(self%selfnimg(mol%nat), source=0)
+        allocate(self%selftridx(ntr, mol%nat), source=0)
 
-      if (img == 0) return
+        ! 5. Triple loop search over the central cell's fractional grid
+        do iat = 1, mol%nat
+            self%inl(iat) = img
+            
+            ! --- SELF-INTERACTIONS ---
+            ! Check against its own images in the 27-cell jacket
+            call get_wsc_pairs(trans, [0.0_wp, 0.0_wp, 0.0_wp], nimg_count, tridx_arr, r2_min, is_self=.true.)
+            self%selfnimg(iat) = nimg_count
+            self%selftridx(1:nimg_count, iat) = tridx_arr(1:nimg_count)
+            self%nimg_max = max(self%nimg_max, nimg_count)
 
-      pos = minloc(dist(:img), dim=1)
+            ! Locate central cell of iat
+            fract(:) = matmul(lat_inv, mol%xyz(:, iat))
+            fract(:) = fract(:) - floor(fract(:))
+            ix = min(n_xyz(1), max(1, int(fract(1) * n_xyz(1)) + 1))
+            iy = min(n_xyz(2), max(1, int(fract(2) * n_xyz(2)) + 1))
+            iz = min(n_xyz(3), max(1, int(fract(3) * n_xyz(3)) + 1))
 
-      r2 = dist(pos)
-      mask(pos) = .false.
+            checked(iat) = .true. ! Flag to avoid comparing an atom to itself in cross-interactions
 
-      iws = 1
-      list(iws) = pos
-      if (img <= iws) return
+            ! --- CROSS-INTERACTIONS ---
+            do dk = -1, 1; do dj = -1, 1; do di = -1, 1
+                ! Map adjacent linked cells back to central cell indices (PBC wrapping)
+                jx = modulo(ix + di - 1, n_xyz(1)) + 1
+                jy = modulo(iy + dj - 1, n_xyz(2)) + 1
+                jz = modulo(iz + dk - 1, n_xyz(3)) + 1
 
-      do
-         pos = minloc(dist(:img), dim=1, mask=mask(:img))
-         if (abs(dist(pos) - r2) > tol) exit
-         mask(pos) = .false.
-         iws = iws + 1
-         list(iws) = pos
-      end do
+                jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
+                jat = head(jc)
 
-   end subroutine get_pairs
+                do while (jat > 0)
+                    if (.not. checked(jat)) then
+                        checked(jat) = .true. 
 
-   !> Generator for neighbourlist using a Linked Cell List approach (O(N) scaling)
-   subroutine generate_3d(self, mol)
-      !> Instance of the neighbourlist
-      type(adjacency_list), intent(inout) :: self
-      !> Molecular structure data
-      type(structure_type), intent(in) :: mol
+                        if (.not. self%complete .and. jat > iat) then
+                            ! Skip symmetrical evaluation, but retain `checked = .true.` to prevent repeat hits
+                        else
+                            ! Distance in the fully wrapped central cell
+                            vec(:) = xyz_wrap(:, iat) - xyz_wrap(:, jat)
 
-      integer :: iat, jat, itr, img, ic, jc
-      integer :: ix, iy, iz, jx, jy, jz, di, dj, dk
-      integer, allocatable :: head(:), nxt(:)
-      integer :: n_xyz(3)
-      real(wp) :: r2, min_cell_width, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3)
-      integer(int64) :: n_cells
+                            ! Apply Wigner-Seitz logic across the 27 jacket translations
+                            call get_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min, is_self=.false.)
 
-      integer :: nimg, iws
-      integer, allocatable :: trlist(:)
-      real(wp) :: vec_base(3)
+                            if (nimg_count > 0 .and. r2_min <= cutoff2) then
+                                img = img + 1
+                                
+                                ! Manual resize for parallel dynamic arrays if necessary
+                                if (size(self%nlat) < img) then
+                                    call resize(self%nlat)
+                                    allocate(tmp_nimg(size(self%nlat)))
+                                    tmp_nimg(1:img-1) = self%nimg(1:img-1)
+                                    call move_alloc(tmp_nimg, self%nimg)
 
+                                    allocate(tmp_tridx(ntr, size(self%nlat)))
+                                    tmp_tridx(:, 1:img-1) = self%tridx(:, 1:img-1)
+                                    call move_alloc(tmp_tridx, self%tridx)
+                                end if
 
-      img = 0
-      cutoff2 = self%cutoff**2
-      call get_lattice_points(mol%periodic, mol%lattice, thr, self%trans)
-
-      ! Allocate list to hold the maximum number of possible translations
-      allocate(trlist(size(self%trans, 2)))
-
-
-      ! 1. Define the grid boundaries and dimensions
-      min_xyz = minval(mol%xyz, dim=2) - buffer
-      max_xyz = maxval(mol%xyz, dim=2) + buffer
-
-      ! Force the cell width to be at least 60.0 to prevent massive empty grids
-      min_cell_width = self%cutoff + eps
-
-      ! Number of cells: must be at least 1, and cell width >= cutoff
-      n_xyz = max(1, floor((max_xyz - min_xyz) / (min_cell_width + eps)))
-      cell_w = (max_xyz - min_xyz) / (real(n_xyz, wp) + eps) + eps
-
-      n_cells = int(n_xyz(1), int64) * int(n_xyz(2), int64) * int(n_xyz(3), int64)
-
-      allocate(head(n_cells), source=0)
-
-      ! 2. Build the Linked List
-      allocate(nxt(mol%nat), source=0)
-
-      do iat = 1, mol%nat
-         ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
-         iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
-         iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
-
-         ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
-         nxt(iat) = head(ic)
-         head(ic) = iat
-      end do
-
-      ! Pre-allocate neighbor arrays
-      call resize(self%nlat, init_size*mol%nat)
-      if (any(mol%periodic)) then
-         call resize(self%nltr, init_size*mol%nat)
-         call resize(self%nimg, init_size*mol%nat)
-         self%nimg = 0
-         allocate(self%tridx((size(self%trans, 2)), init_size*mol%nat))
-         self%tridx = 0
-         allocate(self%selfnimg(mol%nat))
-         self%selfnimg = 0
-         allocate(self%selftridx((size(self%trans, 2)), mol%nat))
-         self%selftridx = 0
-      end if
-
-      ! 3. Triple loop search over nearby cells (O(N) time)
-      do iat = 1, mol%nat
-         self%inl(iat) = img
-
-         ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
-         iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
-         iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
-
-         ! Check 27 neighboring cells (3x3x3 block)
-         do dk = -1, 1; do dj = -1, 1; do di = -1, 1
-                  jx = ix + di; jy = iy + dj; jz = iz + dk
-
-                  ! Skip cells outside the defined grid
-                  if (jx < 1 .or. jx > n_xyz(1) .or. &
-                     jy < 1 .or. jy > n_xyz(2) .or. &
-                     jz < 1 .or. jz > n_xyz(3)) cycle
-
-                  jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
-                  jat = head(jc)
-
-                  do while (jat > 0)
-
-                     ! Symmetrical optimization: skip if jat > iat and complete is false
-                     if (.not. self%complete .and. jat > iat) then
-                        jat = nxt(jat)
-                        cycle
-                     end if
-
-                     if (iat == jat) then
-                        ! Raw distance vector for self-image is just 0.0
-                        vec_base(:) = 0.0_wp
-
-                        ! Find ONLY the closest periodic images
-                        call get_pairs(nimg, self%trans, vec_base, trlist, cutoff2)
-
-                        ! Update selfnimg but DO NOT increment the cross-interaction `img` counter
-                        self%selfnimg(iat) = nimg
-                        if (nimg > 0) then
-                           self%selftridx(1:nimg, iat) = trlist(1:nimg)
+                                self%nlat(img) = jat
+                                self%nimg(img) = nimg_count
+                                self%tridx(1:nimg_count, img) = tridx_arr(1:nimg_count)
+                                self%nimg_max = max(self%nimg_max, nimg_count)
+                            end if
                         end if
-                     else
-                        ! Get the raw distance vector once
-                        vec_base(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
+                    end if
+                    jat = nxt(jat)
+                end do
+            end do; end do; end do
 
-                        ! Find ONLY the closest periodic images
-                        call get_pairs(nimg, self%trans, vec_base, trlist, cutoff2)
+            ! Reset the checked array for the next `iat` evaluation
+            checked(iat) = .false.
+            do dk = -1, 1; do dj = -1, 1; do di = -1, 1
+                jx = modulo(ix + di - 1, n_xyz(1)) + 1
+                jy = modulo(iy + dj - 1, n_xyz(2)) + 1
+                jz = modulo(iz + dk - 1, n_xyz(3)) + 1
+                jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
+                jat = head(jc)
+                do while (jat > 0)
+                    checked(jat) = .false.
+                    jat = nxt(jat)
+                end do
+            end do; end do; end do
 
-                        if (nimg > 0) then
-                           img = img + 1
-                           if (size(self%nlat) < img) call resize(self%nlat)
-                           if (size(self%nltr) < img) call resize(self%nltr)
-                           if (size(self%nimg) < img) call resize(self%nimg)
-                           if (size(self%tridx, 2) < img) call resize(self%tridx, img)
+            self%nnl(iat) = img - self%inl(iat)
+        end do
 
-                           self%nlat(img) = jat
-                           self%nltr(img) = nimg
-                           self%nimg(img) = nimg
-                           self%tridx(1:nimg, img) = trlist(1:nimg)
-                        end if
-                     end if
+        ! Final Cleanup and Exact Sizing
+        call resize(self%nlat, img)
+        allocate(tmp_nimg(img))
+        tmp_nimg(1:img) = self%nimg(1:img)
+        call move_alloc(tmp_nimg, self%nimg)
 
-                     jat = nxt(jat)
-                  end do
-               end do; end do; end do
-         self%nnl(iat) = img - self%inl(iat)
-      end do
+        allocate(tmp_tridx(ntr, img))
+        tmp_tridx(:, 1:img) = self%tridx(:, 1:img)
+        call move_alloc(tmp_tridx, self%tridx)
 
-      ! Cleanup and final sizing
-      if (allocated(head)) deallocate(head)
-      if (allocated(nxt)) deallocate(nxt)
-      if (allocated(trlist)) deallocate(trlist)
-
-      call resize(self%nlat, img)
-
-      if (any(mol%periodic)) then
-         call resize(self%nltr, img)
-         call resize(self%nimg, img)
-         call resize(self%tridx, img)
-      end if
-
-
-   end subroutine generate_3d
+    end subroutine generate_3d
 
 end module mctc_ncoord_adjlist_type
 
