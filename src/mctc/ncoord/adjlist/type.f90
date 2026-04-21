@@ -453,5 +453,233 @@ contains
 
     end subroutine generate_3d
 
+    !> Generator for neighbourlist using a Linked Cell List approach for Periodic Systems
+    !> Optimized with a 27/8 "jacket" reduction for shortest-image searching.
+    subroutine generate_pbc(self, mol)
+        !> Instance of the neighbourlist
+        type(adjacency_list), intent(inout) :: self
+        !> Molecular structure data
+        type(structure_type), intent(in) :: mol
+
+        integer :: iat, jat, img, ic, jc, i, itr
+        integer :: ix, iy, iz, jx, jy, jz, di, dj, dk
+        integer, allocatable :: head(:), nxt(:)
+        logical, allocatable :: checked(:)
+        
+        integer :: n_xyz(3), ntr, nimg_count
+        integer :: tridx_arr(27)
+        integer, allocatable :: tr_int(:, :)
+        real(wp) :: cutoff2, r2_min
+        real(wp) :: lat_inv(3, 3), det, L_vec
+        real(wp) :: fract(3)
+        real(wp), allocatable :: xyz_wrap(:, :), fract_wrap(:, :)
+        real(wp), allocatable :: trans(:, :)
+        real(wp) :: vec(3)
+        integer, allocatable :: tmp_nimg(:), tmp_tridx(:,:)
+
+        ! 1. Setup Lattice Translations (27-cell jacket)
+        call get_lattice_points(mol%periodic, mol%lattice, sqrt(epsilon(0.0_wp)), trans)
+        ntr = size(trans, 2)
+        
+        if (allocated(self%trans)) deallocate(self%trans)
+        allocate(self%trans(3, ntr))
+        self%trans = trans
+
+        cutoff2 = self%cutoff**2
+        img = 0
+        self%nimg_max = 0
+
+        ! 2. Compute Inverse Lattice for Cartesian -> Fractional mapping
+        det = mol%lattice(1,1)*(mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) - &
+              mol%lattice(1,2)*(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) + &
+              mol%lattice(1,3)*(mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1))
+
+        lat_inv(1,1) =  (mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) / det
+        lat_inv(1,2) = -(mol%lattice(1,2)*mol%lattice(3,3) - mol%lattice(1,3)*mol%lattice(3,2)) / det
+        lat_inv(1,3) =  (mol%lattice(1,2)*mol%lattice(2,3) - mol%lattice(1,3)*mol%lattice(2,2)) / det
+        lat_inv(2,1) = -(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) / det
+        lat_inv(2,2) =  (mol%lattice(1,1)*mol%lattice(3,3) - mol%lattice(1,3)*mol%lattice(3,1)) / det
+        lat_inv(2,3) = -(mol%lattice(1,1)*mol%lattice(2,3) - mol%lattice(1,3)*mol%lattice(2,1)) / det
+        lat_inv(3,1) =  (mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1)) / det
+        lat_inv(3,2) = -(mol%lattice(1,1)*mol%lattice(3,2) - mol%lattice(1,2)*mol%lattice(3,1)) / det
+        lat_inv(3,3) =  (mol%lattice(1,1)*mol%lattice(2,2) - mol%lattice(1,2)*mol%lattice(2,1)) / det
+
+        ! Pre-calculate integer components of translation vectors for masking
+        allocate(tr_int(3, ntr))
+        do itr = 1, ntr
+            fract(:) = matmul(lat_inv, trans(:, itr))
+            tr_int(:, itr) = nint(fract(:))
+        end do
+
+        ! 3. Define Grid: force even number of cells to respect half-lattice parameter rule
+        do i = 1, 3
+            L_vec = sqrt(sum(mol%lattice(:, i)**2))
+            n_xyz(i) = max(2, ceiling(L_vec / self%cutoff))
+            if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
+        end do
+
+        ! 4. Build Linked List using wrapped fractional coordinates
+        allocate(head(product(n_xyz)), source=0)
+        allocate(nxt(mol%nat), source=0)
+        allocate(checked(mol%nat), source=.false.)
+        allocate(xyz_wrap(3, mol%nat), fract_wrap(3, mol%nat))
+
+        do iat = 1, mol%nat
+            fract(:) = matmul(lat_inv, mol%xyz(:, iat))
+            fract(:) = fract(:) - floor(fract(:)) 
+            fract_wrap(:, iat) = fract(:)
+            xyz_wrap(:, iat) = matmul(mol%lattice, fract) 
+
+            ix = min(n_xyz(1), max(1, int(fract(1) * n_xyz(1)) + 1))
+            iy = min(n_xyz(2), max(1, int(fract(2) * n_xyz(2)) + 1))
+            iz = min(n_xyz(3), max(1, int(fract(3) * n_xyz(3)) + 1))
+
+            ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
+            nxt(iat) = head(ic)
+            head(ic) = iat
+        end do
+
+        ! Initial allocation for results
+        call resize(self%nlat, mol%nat * 50) 
+        allocate(self%nimg(size(self%nlat)), source=0)
+        allocate(self%tridx(ntr, size(self%nlat)), source=0)
+        allocate(self%selfnimg(mol%nat), source=0)
+        allocate(self%selftridx(ntr, mol%nat), source=0)
+
+        ! 5. Search Logic
+        do iat = 1, mol%nat
+            self%inl(iat) = img
+            
+            ! Self-interactions: Check only 8 relevant periodic copies of iat
+            call get_wsc_pairs_opt(trans, tr_int, fract_wrap(:, iat), [0.0_wp, 0.0_wp, 0.0_wp], &
+                                   nimg_count, tridx_arr, r2_min, .true.)
+            self%selfnimg(iat) = nimg_count
+            self%selftridx(1:nimg_count, iat) = tridx_arr(1:nimg_count)
+            self%nimg_max = max(self%nimg_max, nimg_count)
+
+            ! Locate iat's linked cell
+            ix = min(n_xyz(1), max(1, int(fract_wrap(1, iat) * n_xyz(1)) + 1))
+            iy = min(n_xyz(2), max(1, int(fract_wrap(2, iat) * n_xyz(2)) + 1))
+            iz = min(n_xyz(3), max(1, int(fract_wrap(3, iat) * n_xyz(3)) + 1))
+
+            checked(iat) = .true. 
+
+            do dk = -1, 1; do dj = -1, 1; do di = -1, 1
+                jx = modulo(ix + di - 1, n_xyz(1)) + 1
+                jy = modulo(iy + dj - 1, n_xyz(2)) + 1
+                jz = modulo(iz + dk - 1, n_xyz(3)) + 1
+
+                jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
+                jat = head(jc)
+
+                do while (jat > 0)
+                    if (.not. checked(jat)) then
+                        checked(jat) = .true. 
+
+                        if (self%complete .or. iat >= jat) then
+                            vec(:) = xyz_wrap(:, iat) - xyz_wrap(:, jat)
+
+                            ! Optimized WSC search: checks only 8 images
+                            call get_wsc_pairs_opt(trans, tr_int, fract_wrap(:, jat), vec, &
+                                                   nimg_count, tridx_arr, r2_min, .false.)
+
+                            if (nimg_count > 0 .and. r2_min <= cutoff2) then
+                                img = img + 1
+                                if (size(self%nlat) < img) call resize_nimg_tridx(self, ntr)
+
+                                self%nlat(img) = jat
+                                self%nimg(img) = nimg_count
+                                self%tridx(1:nimg_count, img) = tridx_arr(1:nimg_count)
+                                self%nimg_max = max(self%nimg_max, nimg_count)
+                            end if
+                        end if
+                    end if
+                    jat = nxt(jat)
+                end do
+            end do; end do; end do
+
+            ! Reset checked array using cell-based traversal for efficiency
+            checked(iat) = .false.
+            do dk = -1, 1; do dj = -1, 1; do di = -1, 1
+                jx = modulo(ix + di - 1, n_xyz(1)) + 1
+                jy = modulo(iy + dj - 1, n_xyz(2)) + 1
+                jz = modulo(iz + dk - 1, n_xyz(3)) + 1
+                jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
+                jat = head(jc)
+                do while (jat > 0); checked(jat) = .false.; jat = nxt(jat); end do
+            end do; end do; end do
+
+            self%nnl(iat) = img - self%inl(iat)
+        end do
+
+        ! Cleanup
+        call resize(self%nlat, img)
+        call resize(self%nimg, img)
+        ! tridx resize is handled manually to preserve 2D shape (ntr, img)
+        allocate(tmp_tridx(ntr, img))
+        tmp_tridx(:, 1:img) = self%tridx(:, 1:img)
+        call move_alloc(tmp_tridx, self%tridx)
+
+    contains
+
+        subroutine get_wsc_pairs_opt(trans, tr_int, f_j, rij, iws, list, min_r2, is_self)
+            real(wp), intent(in) :: trans(:, :), rij(3), f_j(3)
+            integer, intent(in) :: tr_int(:, :)
+            integer, intent(out) :: iws, list(:)
+            real(wp), intent(out) :: min_r2
+            logical, intent(in) :: is_self
+            real(wp) :: vec(3), r2
+            integer :: itr, i, v_min(3), v_max(3)
+            logical :: valid(size(trans, 2))
+            real(wp), parameter :: tol = 0.01_wp, thr = 1.0e-8_wp
+
+            iws = 0; list(:) = 0; min_r2 = huge(1.0_wp)
+
+            ! Define which 8 cells constitute the jacket for this target position
+            do i = 1, 3
+                if (f_j(i) < 0.5_wp) then
+                    v_min(i) = -1; v_max(i) = 0
+                else
+                    v_min(i) = 0; v_max(i) = 1
+                end if
+            end do
+
+            do itr = 1, size(trans, 2)
+                valid(itr) = all(tr_int(:, itr) >= v_min .and. tr_int(:, itr) <= v_max)
+                if (.not. valid(itr)) cycle
+                
+                vec(:) = rij - trans(:, itr)
+                r2 = sum(vec**2)
+                if (is_self .and. r2 < thr) cycle
+                if (r2 < min_r2) min_r2 = r2
+            end do
+
+            do itr = 1, size(trans, 2)
+                if (.not. valid(itr)) cycle
+                vec(:) = rij - trans(:, itr)
+                r2 = sum(vec**2)
+                if (is_self .and. r2 < thr) cycle
+                if (abs(r2 - min_r2) <= tol) then
+                    iws = iws + 1
+                    list(iws) = itr
+                end if
+            end do
+        end subroutine get_wsc_pairs_opt
+
+        subroutine resize_nimg_tridx(self, ntr)
+            type(adjacency_list), intent(inout) :: self
+            integer, intent(in) :: ntr
+            integer, allocatable :: t1(:), t2(:,:)
+            integer :: new_size
+            call resize(self%nlat) ! standard resize for nlat
+            new_size = size(self%nlat)
+            allocate(t1(new_size), source=0); t1(1:size(self%nimg)) = self%nimg
+            call move_alloc(t1, self%nimg)
+            allocate(t2(ntr, new_size), source=0); t2(:, 1:size(self%tridx,2)) = self%tridx
+            call move_alloc(t2, self%tridx)
+        end subroutine resize_nimg_tridx
+
+    end subroutine generate_pbc
+
 end module mctc_ncoord_adjlist_type
 
