@@ -124,10 +124,8 @@ contains
       allocate(self%nnl(mol%nat), source=0)
 
       if (any(mol%periodic)) then
-         write(*, *) "Generate periodic neighbour list"
          call generate_3d(self, mol)
       else
-         write(*, *) "Generate non-periodic neighbour list"
          call generate_0d(self, mol)
       end if
    end subroutine new_adjacency_list
@@ -448,7 +446,6 @@ contains
       allocate(tmp_tridx(ntr, img))
       tmp_tridx(:, 1:img) = self%tridx(:, 1:img)
       call move_alloc(tmp_tridx, self%tridx)
-
 
 
    end subroutine generate_3d
