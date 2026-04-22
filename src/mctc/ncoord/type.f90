@@ -47,8 +47,6 @@ module mctc_ncoord_type
       procedure :: get_en_factor
       !> Add CN derivative of an arbitrary function
       procedure :: add_coordination_number_derivs
-      !> Add CN derivative of an arbitrary function
-      procedure :: add_coordination_number_derivs_cut
       !> Add CN derivative of an arbitrary function using the neighbour list
       procedure :: add_coordination_number_derivs_list
       !> Evaluates the counting function (exp, dexp, erf, ...)
@@ -454,81 +452,7 @@ contains
 
    end subroutine ncoord_d_list
 
-
    subroutine add_coordination_number_derivs(self, mol, trans, dEdcn, gradient, sigma)
-
-      !> Coordination number container
-      class(ncoord_type), intent(in) :: self
-
-      !> Molecular structure data
-      type(structure_type), intent(in) :: mol
-
-      !> Lattice points
-      real(wp), intent(in) :: trans(:, :)
-
-      !> Derivative of expression with respect to the coordination number
-      real(wp), intent(in) :: dEdcn(:)
-
-      !> Derivative of the CN with respect to the Cartesian coordinates
-      real(wp), intent(inout) :: gradient(:, :)
-
-      !> Derivative of the CN with respect to strain deformations
-      real(wp), intent(inout) :: sigma(:, :)
-
-      integer :: iat, jat, izp, jzp, itr
-      real(wp) :: r2, r1, rij(3), countd(3), ds(3, 3), cutoff2, den
-
-      ! Thread-private arrays for reduction
-      ! Set to zero explicitly as the shared variants are potentially non-zero (inout)
-      real(wp), allocatable :: gradient_local(:, :), sigma_local(:, :)
-
-      cutoff2 = self%cutoff**2
-
-      !$omp parallel default(none) &
-      !$omp shared(self, mol, trans, cutoff2, dEdcn, gradient, sigma) &
-      !$omp private(iat, jat, itr, izp, jzp, r2, rij, r1, countd, ds, den) &
-      !$omp private(gradient_local, sigma_local)
-      allocate(gradient_local(size(gradient, 1), size(gradient, 2)), source=0.0_wp)
-      allocate(sigma_local(size(sigma, 1), size(sigma, 2)), source=0.0_wp)
-      !$omp do schedule(runtime)
-      do iat = 1, mol%nat
-         izp = mol%id(iat)
-         do jat = 1, iat
-            jzp = mol%id(jat)
-            den = self%get_en_factor(izp, jzp)
-
-            do itr = 1, size(trans, dim=2)
-               rij = mol%xyz(:, iat) - (mol%xyz(:, jat) + trans(:, itr))
-               r2 = sum(rij**2)
-               if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
-               r1 = sqrt(r2)
-
-               countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
-
-               gradient_local(:, iat) = gradient_local(:, iat) + countd &
-               & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
-               gradient_local(:, jat) = gradient_local(:, jat) - countd &
-               & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
-
-               ds = spread(countd, 1, 3) * spread(rij, 2, 3)
-
-               sigma_local(:, :) = sigma_local(:, :) &
-               & + ds * (dEdcn(iat) + &
-               & merge(dEdcn(jat) * self%directed_factor, 0.0_wp, jat /= iat))
-            end do
-         end do
-      end do
-      !$omp end do
-      !$omp critical (add_coordination_number_derivs_)
-      gradient(:, :) = gradient(:, :) + gradient_local(:, :)
-      sigma(:, :) = sigma(:, :) + sigma_local(:, :)
-      !$omp end critical (add_coordination_number_derivs_)
-      deallocate(gradient_local, sigma_local)
-      !$omp end parallel
-
-   end subroutine add_coordination_number_derivs
-
-   subroutine add_coordination_number_derivs_cut(self, mol, trans, dEdcn, gradient, sigma)
       class(ncoord_type), intent(in) :: self
       type(structure_type), intent(in) :: mol
       real(wp), intent(in) :: trans(:, :)
@@ -545,8 +469,10 @@ contains
 
       cutoff2 = self%cutoff**2
 
-      allocate(cn(mol%nat), source=0.0_wp)
-      call ncoord(self, mol, trans, cn)
+      if (self%cut > 0.0_wp) then
+         allocate(cn(mol%nat), source=0.0_wp)
+         call ncoord(self, mol, trans, cn)
+      end if
 
       !$omp parallel default(none) &
       !$omp shared(self, mol, trans, cn, cutoff2, dEdcn, gradient, sigma) &
@@ -568,7 +494,7 @@ contains
             jzp = mol%id(jat)
             den = self%get_en_factor(izp, jzp)
 
-            ! Pre-calculate damping for atom j (Moved outside translation loop)
+            ! Pre-calculate damping for atom j
             jdamp = 1.0_wp
             if (self%cut > 0.0_wp) jdamp = dlog_cn_cut(cn(jat), self%cut)
 
@@ -581,17 +507,13 @@ contains
                if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
                r1 = sqrt(r2)
 
-               ! Raw derivative of counting function w.r.t distance
                countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
 
-               ! Apply the chain rule factor to the gradient
                gradient_local(:, iat) = gradient_local(:, iat) + countd * combined_factor
                gradient_local(:, jat) = gradient_local(:, jat) - countd * combined_factor
 
-               ! Virial/Stress contribution
                ds = spread(countd, 1, 3) * spread(rij, 2, 3)
 
-               ! Note: merge handles the self-interaction case (iat == jat) for sigma
                sigma_local(:, :) = sigma_local(:, :) &
                & + ds * (dEdcn(iat) * idamp + &
                & merge(dEdcn(jat) * self%directed_factor * jdamp, 0.0_wp, jat /= iat))
@@ -607,7 +529,7 @@ contains
 
       deallocate(gradient_local, sigma_local)
       !$omp end parallel
-   end subroutine add_coordination_number_derivs_cut
+   end subroutine add_coordination_number_derivs
 
    subroutine add_coordination_number_derivs_list(self, mol, trans, dEdcn, gradient, sigma, list)
 
@@ -634,6 +556,8 @@ contains
 
       integer :: iat, jat, kat, izp, jzp, itr
       real(wp) :: r2, r1, rij(3), countd(3), ds(3, 3), cutoff2, den
+      real(wp) :: idamp, jdamp, combined_factor
+      real(wp), allocatable :: cn(:)
 
       ! Thread-private arrays for reduction
       ! Set to zero explicitly as the shared variants are potentially non-zero (inout)
@@ -641,19 +565,36 @@ contains
 
       cutoff2 = self%cutoff**2
 
+      if (self%cut > 0.0_wp) then
+         allocate(cn(mol%nat), source=0.0_wp)
+         call ncoord(self, mol, trans, cn)
+      end if
+
       !$omp parallel default(none) &
-      !$omp shared(self, mol, list, trans, cutoff2, dEdcn, gradient, sigma) &
+      !$omp shared(self, mol, list, trans, cutoff2, dEdcn, gradient, sigma, cn) &
       !$omp private(iat, jat, kat, itr, izp, jzp, r2, rij, r1, countd, ds, den) &
-      !$omp private(gradient_local, sigma_local)
+      !$omp private(gradient_local, sigma_local, idamp, jdamp, combined_factor)
       allocate(gradient_local(size(gradient, 1), size(gradient, 2)), source=0.0_wp)
       allocate(sigma_local(size(sigma, 1), size(sigma, 2)), source=0.0_wp)
       !$omp do schedule(runtime)
       do iat = 1, mol%nat
          izp = mol%id(iat)
+
+         ! Pre-calculate damping for atom i
+         idamp = 1.0_wp
+         if (self%cut > 0.0_wp) idamp = dlog_cn_cut(cn(iat), self%cut)
+
          do kat = list%inl(iat) + 1, list%inl(iat) + list%nnl(iat)
             jat = list%nlat(kat)
             jzp = mol%id(jat)
             den = self%get_en_factor(izp, jzp)
+
+            ! Pre-calculate damping for atom j
+            jdamp = 1.0_wp
+            if (self%cut > 0.0_wp) jdamp = dlog_cn_cut(cn(jat), self%cut)
+
+            ! Combined chain-rule factor for the pair contribution
+            combined_factor = dEdcn(iat) * idamp + dEdcn(jat) * self%directed_factor * jdamp
 
             do itr = 1, size(trans, dim=2)
                rij = mol%xyz(:, iat) - (mol%xyz(:, jat) + trans(:, itr))
@@ -663,16 +604,14 @@ contains
 
                countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
 
-               gradient_local(:, iat) = gradient_local(:, iat) + countd &
-               & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
-               gradient_local(:, jat) = gradient_local(:, jat) - countd &
-               & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
+               gradient_local(:, iat) = gradient_local(:, iat) + countd * combined_factor
+               gradient_local(:, jat) = gradient_local(:, jat) - countd * combined_factor
 
                ds = spread(countd, 1, 3) * spread(rij, 2, 3)
 
                sigma_local(:, :) = sigma_local(:, :) &
-               & + ds * (dEdcn(iat) + &
-               & merge(dEdcn(jat) * self%directed_factor, 0.0_wp, jat /= iat))
+               & + ds * (dEdcn(iat) * idamp + &
+               & merge(dEdcn(jat) * self%directed_factor * jdamp, 0.0_wp, jat /= iat))
             end do
          end do
       end do
