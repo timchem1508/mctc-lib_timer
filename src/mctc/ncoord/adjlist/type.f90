@@ -47,7 +47,7 @@
 
 module mctc_ncoord_adjlist_type
    use iso_fortran_env, only : int64
-   use mctc_env, only : wp
+   use mctc_env, only : wp, timer_type, format_time
    use mctc_io, only : structure_type
    use mctc_io_resize, only : resize
    use mctc_cutoff, only: get_lattice_points
@@ -83,7 +83,7 @@ module mctc_ncoord_adjlist_type
 
 
    ! Default input
-   real(wp), parameter :: cutoff_def = 29.0_wp
+   real(wp), parameter :: cutoff_0d_def = 29.0_wp
    logical, parameter :: complete_def = .false.
    integer, parameter :: init_size = 10
    real(wp), parameter :: buffer = 0.01_wp
@@ -110,7 +110,7 @@ contains
       if (present(cutoff)) then
          self%cutoff = cutoff
       else
-         self%cutoff = cutoff_def
+         self%cutoff = cutoff_0d_def
       end if
 
       allocate(self%complete)
@@ -124,6 +124,7 @@ contains
       allocate(self%nnl(mol%nat), source=0)
 
       if (any(mol%periodic)) then
+         !call generate_pbc(self, mol)
          call generate_3d(self, mol)
       else
          call generate_0d(self, mol)
@@ -229,7 +230,6 @@ contains
 
    end subroutine generate_0d
 
-!> Utility to find the shortest distance and its degeneracies across 27 translation images
    subroutine get_wsc_pairs(trans, rij, iws, list, min_r2, is_self)
       real(wp), intent(in) :: trans(:, :)
       real(wp), intent(in) :: rij(3)
@@ -238,35 +238,29 @@ contains
       real(wp), intent(out) :: min_r2
       logical, intent(in) :: is_self
 
-      real(wp) :: vec(3), r2
-      integer :: itr
-      real(wp), parameter :: tol = 0.01_wp
-      real(wp), parameter :: thr = sqrt(epsilon(0.0_wp))
+      real(wp) :: dx, dy, dz, r2
+      integer :: itr, ntr
 
+      ntr = size(trans, 2)
       iws = 0
-      list(:) = 0
       min_r2 = huge(1.0_wp)
 
-      ! Pass 1: find absolute minimum distance
-      do itr = 1, size(trans, 2)
-         vec(:) = rij - trans(:, itr)
-         r2 = vec(1)**2 + vec(2)**2 + vec(3)**2
+      do itr = 1, ntr
+         dx = rij(1) - trans(1, itr)
+         dy = rij(2) - trans(2, itr)
+         dz = rij(3) - trans(3, itr)
+         r2 = dx*dx + dy*dy + dz*dz
 
-         ! If computing self-interactions, ignore the central 0-translation image
-         ! to enforce finding the first actual periodic interaction
+         ! Skip self-interaction (center image) if requested
          if (is_self .and. r2 < thr) cycle
 
-         if (r2 < min_r2) min_r2 = r2
-      end do
-
-      ! Pass 2: map all degeneracies falling within the tolerance
-      do itr = 1, size(trans, 2)
-         vec(:) = rij - trans(:, itr)
-         r2 = vec(1)**2 + vec(2)**2 + vec(3)**2
-
-         if (is_self .and. r2 < thr) cycle
-
-         if (abs(r2 - min_r2) <= tol) then
+         if (r2 < min_r2 - tol) then
+            ! Found a strictly better minimum
+            min_r2 = r2
+            iws = 1
+            list(1) = itr
+         else if (r2 < min_r2 + tol) then
+            ! Within tolerance: record degeneracy
             iws = iws + 1
             list(iws) = itr
          end if
@@ -274,10 +268,8 @@ contains
    end subroutine get_wsc_pairs
 
 !> Generator for neighbourlist using a Linked Cell List approach for Periodic Systems
-   subroutine generate_3d(self, mol)
-      !> Instance of the neighbourlist
+subroutine generate_3d(self, mol)
       type(adjacency_list), intent(inout) :: self
-      !> Molecular structure data
       type(structure_type), intent(in) :: mol
 
       integer :: iat, jat, img, ic, jc, i
@@ -291,25 +283,26 @@ contains
       real(wp) :: lat_inv(3, 3), det, L_vec
       real(wp) :: fract(3), xyz_wrap(3, mol%nat)
       real(wp), allocatable :: trans(:, :)
-      real(wp) :: vec(3)
+      real(wp) :: vec(3), zero_vec(3)
       integer, allocatable :: tmp_nimg(:), tmp_tridx(:,:)
+      integer :: current_capacity
 
-      ! 1. Get 27 translation vectors
+      zero_vec = 0.0_wp
+
+      ! 1. Lattice setup and jacket translations
       call get_lattice_points(mol%periodic, mol%lattice, sqrt(epsilon(0.0_wp)), trans)
       ntr = size(trans, 2)
-
       if (allocated(self%trans)) deallocate(self%trans)
-      allocate(self%trans(3, ntr))
-      self%trans = trans
+      allocate(self%trans, source=trans)
 
       cutoff2 = self%cutoff**2
       img = 0
       self%nimg_max = 0
 
-      ! 2. Compute the inverse of the lattice matrix to map Cartesian to Fractional
+      ! 2. Fast Inverse Lattice Matrix (Cramer's Rule)
       det = mol%lattice(1,1)*(mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) - &
-         mol%lattice(1,2)*(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) + &
-         mol%lattice(1,3)*(mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1))
+            mol%lattice(1,2)*(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) + &
+            mol%lattice(1,3)*(mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1))
 
       lat_inv(1,1) =  (mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) / det
       lat_inv(1,2) = -(mol%lattice(1,2)*mol%lattice(3,3) - mol%lattice(1,3)*mol%lattice(3,2)) / det
@@ -321,18 +314,28 @@ contains
       lat_inv(3,2) = -(mol%lattice(1,1)*mol%lattice(3,2) - mol%lattice(1,2)*mol%lattice(3,1)) / det
       lat_inv(3,3) =  (mol%lattice(1,1)*mol%lattice(2,2) - mol%lattice(1,2)*mol%lattice(2,1)) / det
 
-      ! 3. Grid dimensions
+      ! 3. Grid sizing
       do i = 1, 3
          L_vec = sqrt(sum(mol%lattice(:, i)**2))
          n_xyz(i) = max(2, ceiling(L_vec / self%cutoff))
          if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
       end do
 
-      ! 4. Wrap atoms into the central crystallographic cell and build Linked List
+      ! 4. Initial Buffering (Density-based heuristic)
+      current_capacity = mol%nat * 64 
       allocate(head(product(n_xyz)), source=0)
       allocate(nxt(mol%nat), source=0)
       allocate(checked(mol%nat), source=.false.)
 
+      call resize(self%nlat, current_capacity)
+      if (allocated(self%nimg)) deallocate(self%nimg)
+      if (allocated(self%tridx)) deallocate(self%tridx)
+      allocate(self%nimg(current_capacity), source=0)
+      allocate(self%tridx(ntr, current_capacity), source=0)
+      allocate(self%selfnimg(mol%nat), source=0)
+      allocate(self%selftridx(ntr, mol%nat), source=0)
+
+      ! 5. Build Linked Cell List
       do iat = 1, mol%nat
          fract(:) = matmul(lat_inv, mol%xyz(:, iat))
          fract(:) = fract(:) - floor(fract(:))
@@ -347,24 +350,16 @@ contains
          head(ic) = iat
       end do
 
-      ! Pre-allocate dynamic and fixed arrays
-      call resize(self%nlat, mol%nat * 50)
-      allocate(self%nimg(size(self%nlat)), source=0)
-      allocate(self%tridx(ntr, size(self%nlat)), source=0)
-      allocate(self%selfnimg(mol%nat), source=0)
-      allocate(self%selftridx(ntr, mol%nat), source=0)
-
-      ! 5. Triple loop search over the central cell's fractional grid
+      ! 6. Main Search Loop
       do iat = 1, mol%nat
          self%inl(iat) = img
-
-         ! Check against its own images
-         call get_wsc_pairs(trans, [0.0_wp, 0.0_wp, 0.0_wp], nimg_count, tridx_arr, r2_min, is_self=.true.)
+         
+         ! Handle self-images
+         call get_wsc_pairs(trans, zero_vec, nimg_count, tridx_arr, r2_min, is_self=.true.)
          self%selfnimg(iat) = nimg_count
          self%selftridx(1:nimg_count, iat) = tridx_arr(1:nimg_count)
          self%nimg_max = max(self%nimg_max, nimg_count)
 
-         ! Locate central cell of iat
          fract(:) = matmul(lat_inv, mol%xyz(:, iat))
          fract(:) = fract(:) - floor(fract(:))
          ix = min(n_xyz(1), max(1, int(fract(1) * n_xyz(1)) + 1))
@@ -374,79 +369,62 @@ contains
          checked(iat) = .true.
 
          do dk = -1, 1; do dj = -1, 1; do di = -1, 1
-                  ! Map adjacent linked cells back to central cell indices (PBC wrapping)
-                  jx = modulo(ix + di - 1, n_xyz(1)) + 1
-                  jy = modulo(iy + dj - 1, n_xyz(2)) + 1
-                  jz = modulo(iz + dk - 1, n_xyz(3)) + 1
+            jx = modulo(ix + di - 1, n_xyz(1)) + 1
+            jy = modulo(iy + dj - 1, n_xyz(2)) + 1
+            jz = modulo(iz + dk - 1, n_xyz(3)) + 1
+            jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
+            jat = head(jc)
 
-                  jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
-                  jat = head(jc)
+            do while (jat > 0)
+               if (.not. checked(jat)) then
+                  checked(jat) = .true.
+                  
+                  if (self%complete .or. jat <= iat) then
+                     vec(:) = xyz_wrap(:, iat) - xyz_wrap(:, jat)
+                     call get_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min, is_self=.false.)
 
-                  do while (jat > 0)
-                     if (.not. checked(jat)) then
-                        checked(jat) = .true.
+                     if (nimg_count > 0 .and. r2_min <= cutoff2) then
+                        img = img + 1
 
-                        if (.not. self%complete .and. jat > iat) then
-                        else
-                           ! Distance in the fully wrapped central cell
-                           vec(:) = xyz_wrap(:, iat) - xyz_wrap(:, jat)
-
-                           ! Apply Wigner-Seitz logic across the 27 jacket translations
-                           call get_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min, is_self=.false.)
-
-                           if (nimg_count > 0 .and. r2_min <= cutoff2) then
-                              img = img + 1
-
-                              ! Manual resize for parallel dynamic arrays if necessary
-                              if (size(self%nlat) < img) then
-                                 call resize(self%nlat)
-                                 allocate(tmp_nimg(size(self%nlat)))
-                                 tmp_nimg(1:img-1) = self%nimg(1:img-1)
-                                 call move_alloc(tmp_nimg, self%nimg)
-
-                                 allocate(tmp_tridx(ntr, size(self%nlat)))
-                                 tmp_tridx(:, 1:img-1) = self%tridx(:, 1:img-1)
-                                 call move_alloc(tmp_tridx, self%tridx)
-                              end if
-
-                              self%nlat(img) = jat
-                              self%nimg(img) = nimg_count
-                              self%tridx(1:nimg_count, img) = tridx_arr(1:nimg_count)
-                              self%nimg_max = max(self%nimg_max, nimg_count)
-                           end if
+                        if (img > current_capacity) then
+                           current_capacity = current_capacity * 2
+                           call resize(self%nlat, current_capacity)
+                           call resize(self%nimg, current_capacity)
+                           call resize(self%tridx, current_capacity)
                         end if
-                     end if
-                     jat = nxt(jat)
-                  end do
-               end do; end do; end do
 
-         ! Reset the checked array for the next `iat` evaluation
+                        self%nlat(img) = jat
+                        self%nimg(img) = nimg_count
+                        self%tridx(1:nimg_count, img) = tridx_arr(1:nimg_count)
+                        self%nimg_max = max(self%nimg_max, nimg_count)
+                     end if
+                  end if
+               end if
+               jat = nxt(jat)
+            end do
+         end do; end do; end do
+
+         ! Clean 'checked' array efficiently by retracing the same cells
          checked(iat) = .false.
          do dk = -1, 1; do dj = -1, 1; do di = -1, 1
-                  jx = modulo(ix + di - 1, n_xyz(1)) + 1
-                  jy = modulo(iy + dj - 1, n_xyz(2)) + 1
-                  jz = modulo(iz + dk - 1, n_xyz(3)) + 1
-                  jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
-                  jat = head(jc)
-                  do while (jat > 0)
-                     checked(jat) = .false.
-                     jat = nxt(jat)
-                  end do
-               end do; end do; end do
+            jx = modulo(ix + di - 1, n_xyz(1)) + 1
+            jy = modulo(iy + dj - 1, n_xyz(2)) + 1
+            jz = modulo(iz + dk - 1, n_xyz(3)) + 1
+            jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
+            jat = head(jc)
+            do while (jat > 0)
+               checked(jat) = .false.
+               jat = nxt(jat)
+            end do
+         end do; end do; end do
 
          self%nnl(iat) = img - self%inl(iat)
       end do
 
-      ! Final Cleanup and Exact Sizing
+      ! 7. Final Clean-up: Trim to exact size
       call resize(self%nlat, img)
-      allocate(tmp_nimg(img))
-      tmp_nimg(1:img) = self%nimg(1:img)
-      call move_alloc(tmp_nimg, self%nimg)
-
-      allocate(tmp_tridx(ntr, img))
-      tmp_tridx(:, 1:img) = self%tridx(:, 1:img)
-      call move_alloc(tmp_tridx, self%tridx)
-
+      call resize(self%nimg, img)
+      call resize(self%tridx, img)
 
    end subroutine generate_3d
 
