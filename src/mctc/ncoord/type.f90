@@ -638,6 +638,7 @@ contains
                & merge(dEdcn(jat) * self%directed_factor * jdamp, 0.0_wp, jat /= iat))
             end do
          end do
+         den = self%get_en_factor(izp, izp)
          do itr = 1, size(trans, dim=2)
             rij = mol%xyz(:, iat) - (mol%xyz(:, iat) + trans(:, itr))
             r2 = sum(rij**2)
