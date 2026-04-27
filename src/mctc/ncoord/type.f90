@@ -269,6 +269,15 @@ contains
 
             end do
          end do
+         den = self%get_en_factor(izp, izp)
+         do itr = 1, size(trans, dim=2)
+            rij = mol%xyz(:, iat) - (mol%xyz(:, iat) + trans(:, itr))
+            r2 = sum(rij**2)
+            if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
+            r1 = sqrt(r2)
+            countf = den * self%ncoord_count(izp, izp, r1)
+            cn_local(iat) = cn_local(iat) + countf
+         end do
       end do
       !$omp end do
       !$omp critical (ncoord_list_)
@@ -437,6 +446,21 @@ contains
                end if
 
             end do
+         end do
+         den = self%get_en_factor(izp, izp)
+
+         do itr = 1, size(trans, dim=2)
+            rij = mol%xyz(:, iat) - (mol%xyz(:, iat) + trans(:, itr))
+            r2 = sum(rij**2)
+            if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
+            r1 = sqrt(r2)
+            countf = den * self%ncoord_count(izp, izp, r1)
+            countd = den * self%ncoord_dcount(izp, izp, r1) * rij/r1
+            cn_local(iat) = cn_local(iat) + countf
+            ! accumulate diagonals
+            dcndrdiag_local(:,iat) = dcndrdiag_local(:,iat) + countd
+            sigma = spread(countd, 1, 3) * spread(rij, 2, 3)
+            dcndL_local(:, :, iat) = dcndL_local(:, :, iat) + sigma
          end do
       end do
       !$omp end do
@@ -613,6 +637,17 @@ contains
                & + ds * (dEdcn(iat) * idamp + &
                & merge(dEdcn(jat) * self%directed_factor * jdamp, 0.0_wp, jat /= iat))
             end do
+         end do
+         do itr = 1, size(trans, dim=2)
+            rij = mol%xyz(:, iat) - (mol%xyz(:, iat) + trans(:, itr))
+            r2 = sum(rij**2)
+            if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
+            r1 = sqrt(r2)
+            countd = den * self%ncoord_dcount(izp, izp, r1) * rij/r1
+            gradient_local(:, iat) = gradient_local(:, iat) + countd * combined_factor
+            ds = spread(countd, 1, 3) * spread(rij, 2, 3)
+            sigma_local(:, :) = sigma_local(:, :) &
+            & + ds * (dEdcn(iat) * idamp)
          end do
       end do
       !$omp end do

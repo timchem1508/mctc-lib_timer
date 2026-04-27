@@ -232,19 +232,19 @@ contains
 
    end subroutine generate_0d
 
-   subroutine get_wsc_pairs(trans, rij, iws, list, min_r2, is_self)
+subroutine get_wsc_pairs(trans, rij, iws, list, min_r2)
       real(wp), intent(in) :: trans(:, :)
       real(wp), intent(in) :: rij(3)
       integer, intent(out) :: iws
       integer, intent(out) :: list(:)
       real(wp), intent(out) :: min_r2
-      logical, intent(in) :: is_self
 
       real(wp) :: dx, dy, dz, r2
-      integer :: itr, ntr
+      integer :: itr, ntr, img
 
       ntr = size(trans, 2)
       iws = 0
+      img = 0
       min_r2 = huge(1.0_wp)
 
       do itr = 1, ntr
@@ -252,24 +252,29 @@ contains
          dy = rij(2) - trans(2, itr)
          dz = rij(3) - trans(3, itr)
          r2 = dx*dx + dy*dy + dz*dz
-         ! Skip self-interaction (center image) if requested
-         if (is_self .and. r2 < thr) cycle
+         
+         ! Replicate the original get_pairs indexing behavior:
+         ! The center image (r2 < thr) is skipped, compressing the 
+         ! returned index array (img) by -1 for all subsequent elements.
+         if (r2 < thr) cycle
+         img = img + 1
+
          if (r2 < min_r2 - tol) then
             ! Found a strictly better minimum
             min_r2 = r2
             iws = 1
-            list(1) = itr
+            list(1) = img
          else if (r2 < min_r2 + tol) then
             ! Within tolerance: record degeneracy
             iws = iws + 1
-            list(iws) = itr
+            list(iws) = img
          end if
       end do
 
    end subroutine get_wsc_pairs
 
 !> Generator for neighbourlist using a Linked Cell List approach for Periodic Systems
-   subroutine generate_3d(self, mol)
+subroutine generate_3d(self, mol)
       type(adjacency_list), intent(inout) :: self
       type(structure_type), intent(in) :: mol
 
@@ -286,10 +291,7 @@ contains
       real(wp), allocatable :: trans(:, :)
       real(wp) :: vec(3), zero_vec(3)
       integer :: current_capacity
-      integer, allocatable :: tmp_nimg(:), tmp_tridx(:,:)
-
-      integer, allocatable :: nimg(:, :)
-
+      integer, allocatable :: tmp_nimg(:), tmp_tridx(:,:), nimg_mat(:, :)
       integer :: selfimg, crossimg, prob
 
       zero_vec = 0.0_wp
@@ -308,8 +310,8 @@ contains
 
       ! 2. Fast Inverse Lattice Matrix (Cramer's Rule)
       det = mol%lattice(1,1)*(mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) - &
-         mol%lattice(1,2)*(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) + &
-         mol%lattice(1,3)*(mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1))
+            mol%lattice(1,2)*(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) + &
+            mol%lattice(1,3)*(mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1))
 
       lat_inv(1,1) =  (mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) / det
       lat_inv(1,2) = -(mol%lattice(1,2)*mol%lattice(3,3) - mol%lattice(1,3)*mol%lattice(3,2)) / det
@@ -321,7 +323,7 @@ contains
       lat_inv(3,2) = -(mol%lattice(1,1)*mol%lattice(3,2) - mol%lattice(1,2)*mol%lattice(3,1)) / det
       lat_inv(3,3) =  (mol%lattice(1,1)*mol%lattice(2,2) - mol%lattice(1,2)*mol%lattice(2,1)) / det
 
-      ! 3. Grid sizing
+      ! 3. Grid sizing - TRICLINIC FIX
       do i = 1, 3
          L_vec = sqrt(sum(mol%lattice(:, i)**2))
          if (self%cutoff >= L_vec) then
@@ -367,9 +369,9 @@ contains
       ! 6. Main Search Loop
       do iat = 1, mol%nat
          self%inl(iat) = img
-
+         
          ! Handle self-images
-         call get_wsc_pairs(trans, zero_vec, nimg_count, tridx_arr, r2_min, is_self=.true.)
+         call get_wsc_pairs(trans, zero_vec, nimg_count, tridx_arr, r2_min)
          self%selfnimg(iat) = nimg_count
          self%selftridx(1:nimg_count, iat) = tridx_arr(1:nimg_count)
          self%nimg_max = max(self%nimg_max, nimg_count)
@@ -383,60 +385,56 @@ contains
          checked(iat) = .true.
 
          do dk = -1, 1; do dj = -1, 1; do di = -1, 1
-                  jx = modulo(ix + di - 1, n_xyz(1)) + 1
-                  jy = modulo(iy + dj - 1, n_xyz(2)) + 1
-                  jz = modulo(iz + dk - 1, n_xyz(3)) + 1
-                  jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
-                  jat = head(jc)
+            jx = modulo(ix + di - 1, n_xyz(1)) + 1
+            jy = modulo(iy + dj - 1, n_xyz(2)) + 1
+            jz = modulo(iz + dk - 1, n_xyz(3)) + 1
+            jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
+            jat = head(jc)
 
-                  do while (jat > 0)
-                     if (.not. checked(jat)) then
-                        checked(jat) = .true.
+            do while (jat > 0)
+               if (.not. checked(jat)) then
+                  checked(jat) = .true.
+                  
+                  if (self%complete .or. jat <= iat) then
+                     vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) 
+                     call get_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
 
-                        if (.not. self%complete .and. jat > iat) then
-                           jat = nxt(jat)
-                           cycle
+                     if (nimg_count > 0 .and. r2_min <= cutoff2) then
+                        img = img + 1
+
+                        if (size(self%nlat) < img) then
+                           call resize(self%nlat)
+                           allocate(tmp_nimg(size(self%nlat)))
+                           tmp_nimg(1:img-1) = self%nimg(1:img-1)
+                           call move_alloc(tmp_nimg, self%nimg)
+                           allocate(tmp_tridx(crossimg, size(self%nlat)))
+                           tmp_tridx(:, 1:img-1) = self%tridx(:, 1:img-1)
+                           call move_alloc(tmp_tridx, self%tridx)
                         end if
 
-                        vec(:) = xyz_wrap(:, iat) - xyz_wrap(:, jat)
-                        call get_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min, is_self=.false.)
-
-                        if (nimg_count > 0 .and. r2_min <= cutoff2) then
-                           img = img + 1
-
-                           if (size(self%nlat) < img) then
-                              call resize(self%nlat)
-                              allocate(tmp_nimg(size(self%nlat)))
-                              tmp_nimg(1:img-1) = self%nimg(1:img-1)
-                              call move_alloc(tmp_nimg, self%nimg)
-                              allocate(tmp_tridx(crossimg, size(self%nlat)))
-                              tmp_tridx(:, 1:img-1) = self%tridx(:, 1:img-1)
-                              call move_alloc(tmp_tridx, self%tridx)
-                           end if
-
-                           self%nlat(img) = jat
-                           self%nimg(img) = nimg_count
-                           self%tridx(1:nimg_count, img) = tridx_arr(1:nimg_count)
-                           self%nimg_max = max(self%nimg_max, nimg_count)
-                        end if
+                        self%nlat(img) = jat
+                        self%nimg(img) = nimg_count
+                        self%tridx(1:nimg_count, img) = tridx_arr(1:nimg_count)
+                        self%nimg_max = max(self%nimg_max, nimg_count)
                      end if
-                     jat = nxt(jat)
-                  end do
-               end do; end do; end do
+                  end if
+               end if
+               jat = nxt(jat)
+            end do
+         end do; end do; end do
 
-         ! Clean 'checked' array efficiently by retracing the same cells
          checked(iat) = .false.
          do dk = -1, 1; do dj = -1, 1; do di = -1, 1
-                  jx = modulo(ix + di - 1, n_xyz(1)) + 1
-                  jy = modulo(iy + dj - 1, n_xyz(2)) + 1
-                  jz = modulo(iz + dk - 1, n_xyz(3)) + 1
-                  jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
-                  jat = head(jc)
-                  do while (jat > 0)
-                     checked(jat) = .false.
-                     jat = nxt(jat)
-                  end do
-               end do; end do; end do
+            jx = modulo(ix + di - 1, n_xyz(1)) + 1
+            jy = modulo(iy + dj - 1, n_xyz(2)) + 1
+            jz = modulo(iz + dk - 1, n_xyz(3)) + 1
+            jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
+            jat = head(jc)
+            do while (jat > 0)
+               checked(jat) = .false.
+               jat = nxt(jat)
+            end do
+         end do; end do; end do
 
          self%nnl(iat) = img - self%inl(iat)
       end do
@@ -450,6 +448,18 @@ contains
       allocate(tmp_tridx(crossimg, img))
       tmp_tridx(:, 1:img) = self%tridx(:, 1:img)
       call move_alloc(tmp_tridx, self%tridx)
+
+      allocate(nimg_mat(mol%nat, mol%nat), source=0)
+      do iat = 1, mol%nat
+         nimg_mat(iat, iat) = self%selfnimg(iat)
+         do kat = self%inl(iat) + 1, self%inl(iat) + self%nnl(iat)
+            jat = self%nlat(kat)
+            nimg_mat(iat, jat) = self%nimg(kat)
+            nimg_mat(jat, iat) = self%nimg(kat)
+         end do
+      end do
+
+      deallocate(head, nxt, checked, nimg_mat)
 
    end subroutine generate_3d
 
