@@ -291,7 +291,7 @@ subroutine generate_3d(self, mol)
       real(wp), allocatable :: trans(:, :)
       real(wp) :: vec(3), zero_vec(3)
       integer :: current_capacity
-      integer, allocatable :: tmp_nimg(:), tmp_tridx(:,:), nimg_mat(:, :)
+      integer, allocatable :: tmp_nimg(:), tmp_tridx(:,:)
       integer :: selfimg, crossimg, prob
 
       zero_vec = 0.0_wp
@@ -448,18 +448,6 @@ subroutine generate_3d(self, mol)
       allocate(tmp_tridx(crossimg, img))
       tmp_tridx(:, 1:img) = self%tridx(:, 1:img)
       call move_alloc(tmp_tridx, self%tridx)
-
-      allocate(nimg_mat(mol%nat, mol%nat), source=0)
-      do iat = 1, mol%nat
-         nimg_mat(iat, iat) = self%selfnimg(iat)
-         do kat = self%inl(iat) + 1, self%inl(iat) + self%nnl(iat)
-            jat = self%nlat(kat)
-            nimg_mat(iat, jat) = self%nimg(kat)
-            nimg_mat(jat, iat) = self%nimg(kat)
-         end do
-      end do
-
-      deallocate(head, nxt, checked, nimg_mat)
 
    end subroutine generate_3d
 
