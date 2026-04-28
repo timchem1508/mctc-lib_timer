@@ -253,9 +253,6 @@ subroutine get_wsc_pairs(trans, rij, iws, list, min_r2)
          dz = rij(3) - trans(3, itr)
          r2 = dx*dx + dy*dy + dz*dz
          
-         ! Replicate the original get_pairs indexing behavior:
-         ! The center image (r2 < thr) is skipped, compressing the 
-         ! returned index array (img) by -1 for all subsequent elements.
          if (r2 < thr) cycle
          img = img + 1
 
@@ -308,7 +305,7 @@ subroutine generate_3d(self, mol)
       img = 0
       self%nimg_max = 0
 
-      ! 2. Fast Inverse Lattice Matrix (Cramer's Rule)
+      ! 2. Fast Inverse Lattice Matrix
       det = mol%lattice(1,1)*(mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) - &
             mol%lattice(1,2)*(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) + &
             mol%lattice(1,3)*(mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1))
@@ -323,7 +320,7 @@ subroutine generate_3d(self, mol)
       lat_inv(3,2) = -(mol%lattice(1,1)*mol%lattice(3,2) - mol%lattice(1,2)*mol%lattice(3,1)) / det
       lat_inv(3,3) =  (mol%lattice(1,1)*mol%lattice(2,2) - mol%lattice(1,2)*mol%lattice(2,1)) / det
 
-      ! 3. Grid sizing - TRICLINIC FIX
+      ! 3. Grid sizing 
       do i = 1, 3
          L_vec = sqrt(sum(mol%lattice(:, i)**2))
          if (self%cutoff >= L_vec) then
