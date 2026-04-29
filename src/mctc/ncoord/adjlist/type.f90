@@ -61,8 +61,6 @@ module mctc_ncoord_adjlist_type
    type :: adjacency_list
       !> Realspace cutoff for neighbourlist generation
       real(wp), allocatable :: cutoff
-      !> Whether a complete or a symmetrical reduced map should be generated
-      logical, allocatable :: complete
       !> Offset index in the neighbour map
       integer, allocatable :: inl(:)
       !> Number of neighbours for each atom
@@ -102,11 +100,10 @@ module mctc_ncoord_adjlist_type
 contains
 
    !> Create new neighbourlist for a given geometry and cutoff
-   subroutine new_adjacency_list(self, mol, cutoff, complete)
+   subroutine new_adjacency_list(self, mol, cutoff)
       type(adjacency_list), intent(out) :: self
       type(structure_type), intent(in) :: mol
       real(wp), intent(in), optional :: cutoff
-      logical, intent(in), optional :: complete
 
       allocate(self%cutoff)
       if (present(cutoff)) then
@@ -115,19 +112,11 @@ contains
          self%cutoff = cutoff_0d_def
       end if
 
-      allocate(self%complete)
-      if (present(complete)) then
-         self%complete = complete
-      else
-         self%complete = complete_def
-      end if
-
       allocate(self%inl(mol%nat), source=0)
       allocate(self%nnl(mol%nat), source=0)
 
       if (any(mol%periodic)) then
          call generate_3d(self, mol)
-         !call generate_pbc(self, mol)
       else
          call generate_0d(self, mol)
       end if
@@ -147,6 +136,8 @@ contains
       integer :: n_xyz(3)
       real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3)
       real(wp) :: trans(3, 1) = 0.0_wp
+      real(wp) :: vol, dens
+      integer :: prob
 
       self%trans = trans
 
@@ -157,6 +148,10 @@ contains
       ! We add a small buffer to the bounding box to ensure all atoms are contained
       min_xyz = minval(mol%xyz, dim=2) - buffer
       max_xyz = maxval(mol%xyz, dim=2) + buffer
+
+      vol = (max_xyz(1)-min_xyz(1)) * (max_xyz(2)-min_xyz(2)) * (max_xyz(3)-min_xyz(3))
+      dens = mol%nat / vol
+      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 2.0_wp))
 
       ! Number of cells: must be at least 1, and cell width >= cutoff
       n_xyz = max(1, floor((max_xyz - min_xyz) / (self%cutoff + eps)))
@@ -176,8 +171,10 @@ contains
          head(ic) = iat
       end do
 
+
+
       ! Pre-allocate neighbor arrays
-      call resize(self%nlat, init_size*mol%nat)
+      call resize(self%nlat, prob * mol%nat)
 
       ! 3. Triple loop search over nearby cells (O(N) time)
       do iat = 1, mol%nat
@@ -202,7 +199,7 @@ contains
                   do while (jat > 0)
 
                      ! Symmetrical optimization: skip if jat > iat and complete is false
-                     if (.not. self%complete .and. jat > iat) then
+                     if (jat > iat) then
                         jat = nxt(jat)
                         cycle
                      end if
@@ -232,7 +229,7 @@ contains
 
    end subroutine generate_0d
 
-subroutine get_wsc_pairs(trans, rij, iws, list, min_r2)
+   subroutine get_wsc_pairs(trans, rij, iws, list, min_r2)
       real(wp), intent(in) :: trans(:, :)
       real(wp), intent(in) :: rij(3)
       integer, intent(out) :: iws
@@ -252,7 +249,7 @@ subroutine get_wsc_pairs(trans, rij, iws, list, min_r2)
          dy = rij(2) - trans(2, itr)
          dz = rij(3) - trans(3, itr)
          r2 = dx*dx + dy*dy + dz*dz
-         
+
          if (r2 < thr) cycle
          img = img + 1
 
@@ -271,7 +268,7 @@ subroutine get_wsc_pairs(trans, rij, iws, list, min_r2)
    end subroutine get_wsc_pairs
 
 !> Generator for neighbourlist using a Linked Cell List approach for Periodic Systems
-subroutine generate_3d(self, mol)
+   subroutine generate_3d(self, mol)
       type(adjacency_list), intent(inout) :: self
       type(structure_type), intent(in) :: mol
 
@@ -292,8 +289,8 @@ subroutine generate_3d(self, mol)
       integer :: selfimg, crossimg, prob
 
       zero_vec = 0.0_wp
-      selfimg = 2
-      crossimg = 2
+      selfimg = 1
+      crossimg = 1
 
       ! 1. Lattice setup and jacket translations
       call get_lattice_points(mol%periodic, mol%lattice, sqrt(epsilon(0.0_wp)), trans)
@@ -307,8 +304,8 @@ subroutine generate_3d(self, mol)
 
       ! 2. Fast Inverse Lattice Matrix
       det = mol%lattice(1,1)*(mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) - &
-            mol%lattice(1,2)*(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) + &
-            mol%lattice(1,3)*(mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1))
+         mol%lattice(1,2)*(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) + &
+         mol%lattice(1,3)*(mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1))
 
       lat_inv(1,1) =  (mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) / det
       lat_inv(1,2) = -(mol%lattice(1,2)*mol%lattice(3,3) - mol%lattice(1,3)*mol%lattice(3,2)) / det
@@ -320,11 +317,12 @@ subroutine generate_3d(self, mol)
       lat_inv(3,2) = -(mol%lattice(1,1)*mol%lattice(3,2) - mol%lattice(1,2)*mol%lattice(3,1)) / det
       lat_inv(3,3) =  (mol%lattice(1,1)*mol%lattice(2,2) - mol%lattice(1,2)*mol%lattice(2,1)) / det
 
-      ! 3. Grid sizing 
+      ! 3. Grid sizing
       do i = 1, 3
          L_vec = sqrt(sum(mol%lattice(:, i)**2))
          if (self%cutoff >= L_vec) then
-            selfimg = 6
+            write(*, *) "[INFO] USE THE FULL TRANSLATION IMAGES"
+            selfimg = 12
             crossimg = 6
          end if
          n_xyz(i) = max(2, ceiling(L_vec / self%cutoff))
@@ -334,7 +332,7 @@ subroutine generate_3d(self, mol)
       dens = real(mol%nat, wp)/abs(det)
 
       ! 4. Initial Buffering (Density-based heuristic)
-      prob = int(dens * self%cutoff**3.0_wp * 2.0_wp)
+      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 2.0_wp))
       current_capacity = mol%nat * prob
       allocate(head(product(n_xyz)), source=0)
       allocate(nxt(mol%nat), source=0)
@@ -366,12 +364,14 @@ subroutine generate_3d(self, mol)
       ! 6. Main Search Loop
       do iat = 1, mol%nat
          self%inl(iat) = img
-         
+
          ! Handle self-images
          call get_wsc_pairs(trans, zero_vec, nimg_count, tridx_arr, r2_min)
-         self%selfnimg(iat) = nimg_count
-         self%selftridx(1:nimg_count, iat) = tridx_arr(1:nimg_count)
-         self%nimg_max = max(self%nimg_max, nimg_count)
+         if (nimg_count > 0 .and. r2_min <= cutoff2) then
+            self%selfnimg(iat) = nimg_count
+            self%selftridx(1:nimg_count, iat) = tridx_arr(1:nimg_count)
+            self%nimg_max = max(self%nimg_max, nimg_count)
+         end if
 
          fract(:) = matmul(lat_inv, mol%xyz(:, iat))
          fract(:) = fract(:) - floor(fract(:))
@@ -382,56 +382,56 @@ subroutine generate_3d(self, mol)
          checked(iat) = .true.
 
          do dk = -1, 1; do dj = -1, 1; do di = -1, 1
-            jx = modulo(ix + di - 1, n_xyz(1)) + 1
-            jy = modulo(iy + dj - 1, n_xyz(2)) + 1
-            jz = modulo(iz + dk - 1, n_xyz(3)) + 1
-            jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
-            jat = head(jc)
+                  jx = modulo(ix + di - 1, n_xyz(1)) + 1
+                  jy = modulo(iy + dj - 1, n_xyz(2)) + 1
+                  jz = modulo(iz + dk - 1, n_xyz(3)) + 1
+                  jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
+                  jat = head(jc)
 
-            do while (jat > 0)
-               if (.not. checked(jat)) then
-                  checked(jat) = .true.
-                  
-                  if (self%complete .or. jat <= iat) then
-                     vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) 
-                     call get_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
+                  do while (jat > 0)
+                     if (.not. checked(jat)) then
+                        checked(jat) = .true.
 
-                     if (nimg_count > 0 .and. r2_min <= cutoff2) then
-                        img = img + 1
+                        if (jat <= iat) then
+                           vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
+                           call get_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
 
-                        if (size(self%nlat) < img) then
-                           call resize(self%nlat)
-                           allocate(tmp_nimg(size(self%nlat)))
-                           tmp_nimg(1:img-1) = self%nimg(1:img-1)
-                           call move_alloc(tmp_nimg, self%nimg)
-                           allocate(tmp_tridx(crossimg, size(self%nlat)))
-                           tmp_tridx(:, 1:img-1) = self%tridx(:, 1:img-1)
-                           call move_alloc(tmp_tridx, self%tridx)
+                           if (nimg_count > 0 .and. r2_min <= cutoff2) then
+                              img = img + 1
+
+                              if (size(self%nlat) < img) then
+                                 call resize(self%nlat)
+                                 allocate(tmp_nimg(size(self%nlat)))
+                                 tmp_nimg(1:img-1) = self%nimg(1:img-1)
+                                 call move_alloc(tmp_nimg, self%nimg)
+                                 allocate(tmp_tridx(crossimg, size(self%nlat)))
+                                 tmp_tridx(:, 1:img-1) = self%tridx(:, 1:img-1)
+                                 call move_alloc(tmp_tridx, self%tridx)
+                              end if
+
+                              self%nlat(img) = jat
+                              self%nimg(img) = nimg_count
+                              self%tridx(1:nimg_count, img) = tridx_arr(1:nimg_count)
+                              self%nimg_max = max(self%nimg_max, nimg_count)
+                           end if
                         end if
-
-                        self%nlat(img) = jat
-                        self%nimg(img) = nimg_count
-                        self%tridx(1:nimg_count, img) = tridx_arr(1:nimg_count)
-                        self%nimg_max = max(self%nimg_max, nimg_count)
                      end if
-                  end if
-               end if
-               jat = nxt(jat)
-            end do
-         end do; end do; end do
+                     jat = nxt(jat)
+                  end do
+               end do; end do; end do
 
          checked(iat) = .false.
          do dk = -1, 1; do dj = -1, 1; do di = -1, 1
-            jx = modulo(ix + di - 1, n_xyz(1)) + 1
-            jy = modulo(iy + dj - 1, n_xyz(2)) + 1
-            jz = modulo(iz + dk - 1, n_xyz(3)) + 1
-            jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
-            jat = head(jc)
-            do while (jat > 0)
-               checked(jat) = .false.
-               jat = nxt(jat)
-            end do
-         end do; end do; end do
+                  jx = modulo(ix + di - 1, n_xyz(1)) + 1
+                  jy = modulo(iy + dj - 1, n_xyz(2)) + 1
+                  jz = modulo(iz + dk - 1, n_xyz(3)) + 1
+                  jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
+                  jat = head(jc)
+                  do while (jat > 0)
+                     checked(jat) = .false.
+                     jat = nxt(jat)
+                  end do
+               end do; end do; end do
 
          self%nnl(iat) = img - self%inl(iat)
       end do
