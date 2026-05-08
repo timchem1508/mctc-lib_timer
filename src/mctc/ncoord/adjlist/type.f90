@@ -38,12 +38,15 @@
 !> nnl   =  |  2 ->  |  3 ->     |  2 ->  |  3 ->     |  2 ->  |  |
 !> nlat  =     2, 4, 5, 1, 3, 5, 6, 2, 4, 6, 1, 3, 5, 6, 1, 2, 4, 2, 3, 4
 !> nltr  =     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+!> nimg  =     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+!> tridx =     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
 !> ```
 !>
 !> An alternative representation would be to store just the offsets in `inl` and
 !> additional beyond the last element the total number of neighbors. However,
 !> the indexing is from inl(i) to inl(i+1)-1 could be confusing, therefore
-!> two arrays are used for clarity.
+!> two arrays are used for clarity. `nimg` saves the closest images of cross-
+!> interaction in the periodic system, `tridx` saves its translation index.
 
 module mctc_ncoord_adjlist_type
    use iso_fortran_env, only : int64
@@ -72,30 +75,28 @@ module mctc_ncoord_adjlist_type
       !> Lattice translation vector
       real(wp), allocatable :: trans(:, :)
       !> Wiegner-Seitz cell parameters
+      !> Maximal number of interaction images
       integer :: nimg_max
+      !> Number of images per cross-interaction
       integer, allocatable :: nimg(:)
+      !> Number of images per self-interaction
       integer, allocatable :: selfnimg(:)
-      integer, allocatable :: selftridx(:, :)
+      !> Primitive unit cell image index per cross-interaction
       integer, allocatable :: tridx(:, :)
+      !> Primitive unit cell image index per self-interaction
+      integer, allocatable :: selftridx(:, :)
    end type adjacency_list
 
 
    ! Default input
-   real(wp), parameter :: cutoff_0d_def = 29.0_wp
+   real(wp), parameter :: cutoff_def = 29.0_wp
    logical, parameter :: complete_def = .false.
    integer, parameter :: init_size = 10
    real(wp), parameter :: buffer = 0.01_wp
-   real(wp), parameter :: grid_def = 0.001_wp
-
    real(wp), parameter :: eps = tiny(1.0_wp)
-
-   !> Small cutoff threshold to create only closest cells
    real(wp), parameter :: thr = sqrt(epsilon(0.0_wp))
 
-   !> Tolerance to consider equivalent images
    real(wp), parameter :: tol = 0.01_wp
-
-   real(wp), parameter :: pi = 3.141592653589793238462643383279502884197
 
 contains
 
@@ -109,17 +110,18 @@ contains
       if (present(cutoff)) then
          self%cutoff = cutoff
       else
-         self%cutoff = cutoff_0d_def
+         self%cutoff = cutoff_def
       end if
 
       allocate(self%inl(mol%nat), source=0)
       allocate(self%nnl(mol%nat), source=0)
 
       if (any(mol%periodic)) then
-         call generate_3d(self, mol)
+         call generate_wsc(self, mol)
       else
          call generate_0d(self, mol)
       end if
+
    end subroutine new_adjacency_list
 
    !> Generator for neighbourlist using a Linked Cell List approach (O(N) scaling)
@@ -145,13 +147,12 @@ contains
       cutoff2 = self%cutoff**2
 
       ! 1. Define the grid boundaries and dimensions
-      ! We add a small buffer to the bounding box to ensure all atoms are contained
       min_xyz = minval(mol%xyz, dim=2) - buffer
       max_xyz = maxval(mol%xyz, dim=2) + buffer
 
       vol = (max_xyz(1)-min_xyz(1)) * (max_xyz(2)-min_xyz(2)) * (max_xyz(3)-min_xyz(3))
       dens = mol%nat / vol
-      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 2.0_wp))
+      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 4.0_wp))
 
       ! Number of cells: must be at least 1, and cell width >= cutoff
       n_xyz = max(1, floor((max_xyz - min_xyz) / (self%cutoff + eps)))
@@ -171,10 +172,9 @@ contains
          head(ic) = iat
       end do
 
-
-
       ! Pre-allocate neighbor arrays
       call resize(self%nlat, prob * mol%nat)
+      if (any(mol%periodic)) call resize(self%nltr, prob * mol%nat)
 
       ! 3. Triple loop search over nearby cells (O(N) time)
       do iat = 1, mol%nat
@@ -198,7 +198,7 @@ contains
 
                   do while (jat > 0)
 
-                     ! Symmetrical optimization: skip if jat > iat and complete is false
+                     ! Symmetrical optimization
                      if (jat > iat) then
                         jat = nxt(jat)
                         cycle
@@ -215,6 +215,10 @@ contains
                         img = img + 1
                         if (size(self%nlat) < img) call resize(self%nlat)
                         self%nlat(img) = jat
+                        if (any(mol%periodic)) then
+                           if (size(self%nltr) < img) call resize(self%nltr)
+                           self%nltr(img) = itr
+                        end if
                      end do
                      jat = nxt(jat)
                   end do
@@ -226,6 +230,7 @@ contains
       if (allocated(head)) deallocate(head)
       if (allocated(nxt)) deallocate(nxt)
       call resize(self%nlat, img)
+      if (any(mol%periodic)) call resize(self%nltr, img)
 
    end subroutine generate_0d
 
@@ -268,8 +273,10 @@ contains
    end subroutine get_wsc_pairs
 
 !> Generator for neighbourlist using a Linked Cell List approach for Periodic Systems
-   subroutine generate_3d(self, mol)
+   subroutine generate_wsc(self, mol)
+      !> Instance of the neighbourlist
       type(adjacency_list), intent(inout) :: self
+      !> Molecular structure data
       type(structure_type), intent(in) :: mol
 
       integer :: iat, jat, img, ic, jc, i, kat
@@ -320,8 +327,7 @@ contains
       ! 3. Grid sizing
       do i = 1, 3
          L_vec = sqrt(sum(mol%lattice(:, i)**2))
-         if (self%cutoff >= L_vec) then
-            write(*, *) "[INFO] USE THE FULL TRANSLATION IMAGES"
+         if (self%cutoff >= 0.25_wp * L_vec) then
             selfimg = 12
             crossimg = 6
          end if
@@ -332,7 +338,7 @@ contains
       dens = real(mol%nat, wp)/abs(det)
 
       ! 4. Initial Buffering (Density-based heuristic)
-      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 2.0_wp))
+      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 4.0_wp))
       current_capacity = mol%nat * prob
       allocate(head(product(n_xyz)), source=0)
       allocate(nxt(mol%nat), source=0)
@@ -446,7 +452,7 @@ contains
       tmp_tridx(:, 1:img) = self%tridx(:, 1:img)
       call move_alloc(tmp_tridx, self%tridx)
 
-   end subroutine generate_3d
+   end subroutine generate_wsc
 
 end module mctc_ncoord_adjlist_type
 
