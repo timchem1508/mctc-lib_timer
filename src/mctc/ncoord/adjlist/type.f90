@@ -64,6 +64,8 @@ module mctc_ncoord_adjlist_type
    type :: adjacency_list
       !> Realspace cutoff for neighbourlist generation
       real(wp), allocatable :: cutoff
+      !> Complete asymmetric neighbour list flag
+      logical :: complete
       !> Offset index in the neighbour map
       integer, allocatable :: inl(:)
       !> Number of neighbours for each atom
@@ -90,21 +92,23 @@ module mctc_ncoord_adjlist_type
 
    ! Default input
    real(wp), parameter :: cutoff_def = 29.0_wp
+   real(wp), parameter :: trans_def(3, 1) = 0.0_wp
    logical, parameter :: complete_def = .false.
    integer, parameter :: init_size = 10
    real(wp), parameter :: buffer = 0.01_wp
    real(wp), parameter :: eps = tiny(1.0_wp)
    real(wp), parameter :: thr = sqrt(epsilon(0.0_wp))
-
    real(wp), parameter :: tol = 0.01_wp
 
 contains
 
    !> Create new neighbourlist for a given geometry and cutoff
-   subroutine new_adjacency_list(self, mol, cutoff)
+   subroutine new_adjacency_list(self, mol, cutoff, trans, complete)
       type(adjacency_list), intent(out) :: self
       type(structure_type), intent(in) :: mol
       real(wp), intent(in), optional :: cutoff
+      real(wp), intent(in), optional :: trans(:, :)
+      logical, intent(in), optional :: complete
 
       allocate(self%cutoff)
       if (present(cutoff)) then
@@ -113,12 +117,23 @@ contains
          self%cutoff = cutoff_def
       end if
 
+      if (present(complete)) then
+         self%complete = complete
+      else 
+         self%complete = complete_def
+      end if
+
       allocate(self%inl(mol%nat), source=0)
       allocate(self%nnl(mol%nat), source=0)
 
       if (any(mol%periodic)) then
          call generate_wsc(self, mol)
       else
+         if (present(trans)) then
+            self%trans = trans
+         else 
+            allocate(self%trans, source=trans_def)
+         end if
          call generate_0d(self, mol)
       end if
 
@@ -137,11 +152,8 @@ contains
       integer, allocatable :: head(:), nxt(:)
       integer :: n_xyz(3)
       real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3)
-      real(wp) :: trans(3, 1) = 0.0_wp
       real(wp) :: vol, dens
       integer :: prob
-
-      self%trans = trans
 
       img = 0
       cutoff2 = self%cutoff**2
@@ -199,14 +211,14 @@ contains
                   do while (jat > 0)
 
                      ! Symmetrical optimization
-                     if (jat > iat) then
+                     if (jat > iat .or. self%complete) then
                         jat = nxt(jat)
                         cycle
                      end if
 
                      ! Check all translation images for this atom pair
-                     do itr = 1, size(trans, 2)
-                        vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - trans(:, itr)
+                     do itr = 1, size(self%trans, 2)
+                        vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
                         r2 = sum(vec**2)
 
                         ! Standard distance check and self-interaction exclusion
@@ -327,7 +339,7 @@ contains
       ! 3. Grid sizing
       do i = 1, 3
          L_vec = sqrt(sum(mol%lattice(:, i)**2))
-         if (self%cutoff >= 0.25_wp * L_vec) then
+         if (self%cutoff >= 0.05_wp * L_vec) then
             selfimg = 12
             crossimg = 6
          end if
@@ -398,7 +410,7 @@ contains
                      if (.not. checked(jat)) then
                         checked(jat) = .true.
 
-                        if (jat <= iat) then
+                        if (jat <= iat .or. self%complete) then
                            vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
                            call get_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
 
