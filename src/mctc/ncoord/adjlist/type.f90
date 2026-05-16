@@ -89,7 +89,6 @@ module mctc_ncoord_adjlist_type
       integer, allocatable :: selftridx(:, :)
    end type adjacency_list
 
-
    ! Default input
    real(wp), parameter :: cutoff_def = 29.0_wp
    real(wp), parameter :: trans_def(3, 1) = 0.0_wp
@@ -104,10 +103,15 @@ contains
 
    !> Create new neighbourlist for a given geometry and cutoff
    subroutine new_adjacency_list(self, mol, cutoff, trans, complete)
+      !> Instance of the neighbourlist
       type(adjacency_list), intent(out) :: self
+      !> Structure type
       type(structure_type), intent(in) :: mol
+      !> Realspace cutoff for neighbourlist generation
       real(wp), intent(in), optional :: cutoff
+      !> Lattice translation vectors for periodic systems
       real(wp), intent(in), optional :: trans(:, :)
+      !> Flag for complete neighbourlist generation
       logical, intent(in), optional :: complete
 
       allocate(self%cutoff)
@@ -247,10 +251,15 @@ contains
    end subroutine generate_0d
 
    subroutine get_wsc_pairs(trans, rij, iws, list, min_r2)
+      !> Translation vectors
       real(wp), intent(in) :: trans(:, :)
+      !> Interatomic vector
       real(wp), intent(in) :: rij(3)
+      !> Number of images for a pair
       integer, intent(out) :: iws
+      !> List of image indices for a pair
       integer, intent(out) :: list(:)
+      !> Minimum squared distance found
       real(wp), intent(out) :: min_r2
 
       real(wp) :: dx, dy, dz, r2
