@@ -123,7 +123,7 @@ contains
 
       if (present(complete)) then
          self%complete = complete
-      else 
+      else
          self%complete = complete_def
       end if
 
@@ -135,7 +135,7 @@ contains
       else
          if (present(trans)) then
             self%trans = trans
-         else 
+         else
             allocate(self%trans, source=trans_def)
          end if
          call generate_hybrid(self, mol)
@@ -368,8 +368,8 @@ contains
 
                         if (jat <= iat .or. self%complete) then
                            ! Compute distance vector using wrapped coordinates
-                           vec(:) = xyz_wrap(:, iat) - xyz_wrap(:, jat)
-                           
+                           vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
+
                            call get_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
 
                            if (nimg_count > 0 .and. r2_min <= cutoff2) then
@@ -502,11 +502,10 @@ contains
       end if
 
       if (is_orthogonal) then
-         ! DEFAULT: Optimized for orthogonal classes based on vector magnitudes
+         ! DEFAULT ROUTINE: Optimized for orthogonal classes based on vector magnitudes
          do i = 1, 3
             L_vec = sqrt(sum(lattice(:, i)**2))
             if (cutoff >= 0.05_wp * L_vec) then
-               write(*, *) "Use high coordination number storage"
                selfimg = 12
                crossimg = 6
             end if
@@ -514,8 +513,8 @@ contains
             if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
          end do
       else
-         ! Calculates strict perpendicular heights via reciprocal cross products
-         
+         ! OBLIQUE ROUTINE: Calculates strict perpendicular heights via reciprocal cross products
+
          ! Perpendicular height H1 (normal to a2 x a3)
          cross_ij(1) = lattice(2,2)*lattice(3,3) - lattice(3,2)*lattice(2,3)
          cross_ij(2) = lattice(3,2)*lattice(1,3) - lattice(1,2)*lattice(3,3)
@@ -534,13 +533,12 @@ contains
          cross_ij(3) = lattice(1,1)*lattice(2,2) - lattice(2,1)*lattice(1,2)
          H(3) = abs(det) / sqrt(sum(cross_ij**2))
 
+         ! Allocate more defensively for skewed boundary conditions
+         selfimg = 27
+         crossimg = 14
+
          ! Map cells dynamically to the strict real-space thickness
          do i = 1, 3
-            if (cutoff >= 0.05_wp * H(i)) then
-               write(*, *) "Use high coordination number storage"
-               selfimg = 12
-               crossimg = 6
-            end if
             n_xyz(i) = max(2, ceiling(H(i) / cutoff))
             if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
          end do
