@@ -138,13 +138,13 @@ contains
          else 
             allocate(self%trans, source=trans_def)
          end if
-         call generate_0d(self, mol)
+         call generate_hybrid(self, mol)
       end if
 
    end subroutine new_adjacency_list
 
-   !> Generator for neighbourlist using a Linked Cell List approach (O(N) scaling)
-   subroutine generate_0d(self, mol)
+   !> Generator for neighbourlist using a Hybrid List approach (O(N) scaling)
+   subroutine generate_hybrid(self, mol)
       !> Instance of the neighbourlist
       type(adjacency_list), intent(inout) :: self
       !> Molecular structure data
@@ -248,52 +248,9 @@ contains
       call resize(self%nlat, img)
       if (any(mol%periodic)) call resize(self%nltr, img)
 
-   end subroutine generate_0d
+   end subroutine generate_hybrid
 
-   subroutine get_wsc_pairs(trans, rij, iws, list, min_r2)
-      !> Translation vectors
-      real(wp), intent(in) :: trans(:, :)
-      !> Interatomic vector
-      real(wp), intent(in) :: rij(3)
-      !> Number of images for a pair
-      integer, intent(out) :: iws
-      !> List of image indices for a pair
-      integer, intent(out) :: list(:)
-      !> Minimum squared distance found
-      real(wp), intent(out) :: min_r2
-
-      real(wp) :: dx, dy, dz, r2
-      integer :: itr, ntr, img
-
-      ntr = size(trans, 2)
-      iws = 0
-      img = 0
-      min_r2 = huge(1.0_wp)
-
-      do itr = 1, ntr
-         dx = rij(1) - trans(1, itr)
-         dy = rij(2) - trans(2, itr)
-         dz = rij(3) - trans(3, itr)
-         r2 = dx*dx + dy*dy + dz*dz
-
-         if (r2 < thr) cycle
-         img = img + 1
-
-         if (r2 < min_r2 - tol) then
-            ! Found a strictly better minimum
-            min_r2 = r2
-            iws = 1
-            list(1) = img
-         else if (r2 < min_r2 + tol) then
-            ! Within tolerance: record degeneracy
-            iws = iws + 1
-            list(iws) = img
-         end if
-      end do
-
-   end subroutine get_wsc_pairs
-
-!> Generator for neighbourlist using a Linked Cell List approach for Periodic Systems
+   !> Generator of the Hybrid List for Periodic Systems based on Wiegner-Seitz Cell (O(N) scaling)
    subroutine generate_wsc(self, mol)
       !> Instance of the neighbourlist
       type(adjacency_list), intent(inout) :: self
@@ -308,7 +265,7 @@ contains
       integer :: n_xyz(3), ntr, nimg_count
       integer :: tridx_arr(27)
       real(wp) :: cutoff2, r2_min, dens
-      real(wp) :: lat_inv(3, 3), det, L_vec
+      real(wp) :: lat_inv(3, 3), det
       real(wp) :: fract(3), xyz_wrap(3, mol%nat)
       real(wp), allocatable :: trans(:, :)
       real(wp) :: vec(3), zero_vec(3)
@@ -317,8 +274,6 @@ contains
       integer :: selfimg, crossimg, prob
 
       zero_vec = 0.0_wp
-      selfimg = 1
-      crossimg = 1
 
       ! 1. Lattice setup and jacket translations
       call get_lattice_points(mol%periodic, mol%lattice, sqrt(epsilon(0.0_wp)), trans)
@@ -345,16 +300,8 @@ contains
       lat_inv(3,2) = -(mol%lattice(1,1)*mol%lattice(3,2) - mol%lattice(1,2)*mol%lattice(3,1)) / det
       lat_inv(3,3) =  (mol%lattice(1,1)*mol%lattice(2,2) - mol%lattice(1,2)*mol%lattice(2,1)) / det
 
-      ! 3. Grid sizing
-      do i = 1, 3
-         L_vec = sqrt(sum(mol%lattice(:, i)**2))
-         if (self%cutoff >= 0.05_wp * L_vec) then
-            selfimg = 12
-            crossimg = 6
-         end if
-         n_xyz(i) = max(2, ceiling(L_vec / self%cutoff))
-         if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
-      end do
+      ! 3. Grid Sizing calculation based on lattice geometry and cutoff
+      call compute_grid(mol%lattice, det, self%cutoff, n_xyz, selfimg, crossimg)
 
       dens = real(mol%nat, wp)/abs(det)
 
@@ -420,7 +367,9 @@ contains
                         checked(jat) = .true.
 
                         if (jat <= iat .or. self%complete) then
-                           vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
+                           ! Compute distance vector using wrapped coordinates
+                           vec(:) = xyz_wrap(:, iat) - xyz_wrap(:, jat)
+                           
                            call get_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
 
                            if (nimg_count > 0 .and. r2_min <= cutoff2) then
@@ -474,6 +423,130 @@ contains
       call move_alloc(tmp_tridx, self%tridx)
 
    end subroutine generate_wsc
+
+   subroutine get_wsc_pairs(trans, rij, iws, list, min_r2)
+      !> Translation vectors
+      real(wp), intent(in) :: trans(:, :)
+      !> Interatomic vector
+      real(wp), intent(in) :: rij(3)
+      !> Number of images for a pair
+      integer, intent(out) :: iws
+      !> List of image indices for a pair
+      integer, intent(out) :: list(:)
+      !> Minimum squared distance found
+      real(wp), intent(out) :: min_r2
+
+      real(wp) :: dx, dy, dz, r2
+      integer :: itr, ntr, img
+
+      ntr = size(trans, 2)
+      iws = 0
+      img = 0
+      min_r2 = huge(1.0_wp)
+
+      do itr = 1, ntr
+         dx = rij(1) - trans(1, itr)
+         dy = rij(2) - trans(2, itr)
+         dz = rij(3) - trans(3, itr)
+         r2 = dx*dx + dy*dy + dz*dz
+
+         if (r2 < thr) cycle
+         img = img + 1
+
+         if (r2 < min_r2 - tol) then
+            ! Found a strictly better minimum
+            min_r2 = r2
+            iws = 1
+            list(1) = img
+         else if (r2 < min_r2 + tol) then
+            ! Within tolerance: record degeneracy
+            iws = iws + 1
+            list(iws) = img
+         end if
+      end do
+
+   end subroutine get_wsc_pairs
+
+   !> Computes safe linked cell grid sub-divisions for any crystal class
+   subroutine compute_grid(lattice, det, cutoff, n_xyz, selfimg, crossimg)
+      !> Lattice vectors [A1 | A2 | A3]
+      real(wp), intent(in) :: lattice(3, 3)
+      !> Determinant (Volume) of the lattice
+      real(wp), intent(in) :: det
+      !> Interaction cutoff radius
+      real(wp), intent(in) :: cutoff
+      !> Output: Number of grid subdivisions along each axis
+      integer, intent(out) :: n_xyz(3)
+      !> Output: Allocation capacity for self-images
+      integer, intent(out) :: selfimg
+      !> Output: Allocation capacity for cross-images
+      integer, intent(out) :: crossimg
+
+      real(wp) :: L_vec, H(3), cross_ij(3)
+      real(wp) :: dot_12, dot_23, dot_31
+      logical  :: is_orthogonal
+      integer  :: i
+
+      selfimg = 1
+      crossimg = 1
+
+      ! Check for orthogonality (Cubic, Tetragonal, Orthorhombic/Rectangular)
+      dot_12 = dot_product(lattice(:, 1), lattice(:, 2))
+      dot_23 = dot_product(lattice(:, 2), lattice(:, 3))
+      dot_31 = dot_product(lattice(:, 3), lattice(:, 1))
+
+      if (abs(dot_12) < tol .and. abs(dot_23) < tol .and. abs(dot_31) < tol) then
+         is_orthogonal = .true.
+      else
+         is_orthogonal = .false.
+      end if
+
+      if (is_orthogonal) then
+         ! DEFAULT: Optimized for orthogonal classes based on vector magnitudes
+         do i = 1, 3
+            L_vec = sqrt(sum(lattice(:, i)**2))
+            if (cutoff >= 0.05_wp * L_vec) then
+               write(*, *) "Use high coordination number storage"
+               selfimg = 12
+               crossimg = 6
+            end if
+            n_xyz(i) = max(2, ceiling(L_vec / cutoff))
+            if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
+         end do
+      else
+         ! Calculates strict perpendicular heights via reciprocal cross products
+         
+         ! Perpendicular height H1 (normal to a2 x a3)
+         cross_ij(1) = lattice(2,2)*lattice(3,3) - lattice(3,2)*lattice(2,3)
+         cross_ij(2) = lattice(3,2)*lattice(1,3) - lattice(1,2)*lattice(3,3)
+         cross_ij(3) = lattice(1,2)*lattice(2,3) - lattice(2,2)*lattice(1,3)
+         H(1) = abs(det) / sqrt(sum(cross_ij**2))
+
+         ! Perpendicular height H2 (normal to a3 x a1)
+         cross_ij(1) = lattice(2,3)*lattice(3,1) - lattice(3,3)*lattice(2,1)
+         cross_ij(2) = lattice(3,3)*lattice(1,1) - lattice(1,3)*lattice(3,1)
+         cross_ij(3) = lattice(1,3)*lattice(2,1) - lattice(2,3)*lattice(1,1)
+         H(2) = abs(det) / sqrt(sum(cross_ij**2))
+
+         ! Perpendicular height H3 (normal to a1 x a2)
+         cross_ij(1) = lattice(2,1)*lattice(3,2) - lattice(3,1)*lattice(2,2)
+         cross_ij(2) = lattice(3,1)*lattice(1,2) - lattice(1,1)*lattice(3,2)
+         cross_ij(3) = lattice(1,1)*lattice(2,2) - lattice(2,1)*lattice(1,2)
+         H(3) = abs(det) / sqrt(sum(cross_ij**2))
+
+         ! Map cells dynamically to the strict real-space thickness
+         do i = 1, 3
+            if (cutoff >= 0.05_wp * H(i)) then
+               write(*, *) "Use high coordination number storage"
+               selfimg = 12
+               crossimg = 6
+            end if
+            n_xyz(i) = max(2, ceiling(H(i) / cutoff))
+            if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
+         end do
+      end if
+
+   end subroutine compute_grid
 
 end module mctc_ncoord_adjlist_type
 
