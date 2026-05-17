@@ -342,6 +342,9 @@ contains
          ! Handle self-images
          call get_wsc_pairs(trans, zero_vec, nimg_count, tridx_arr, r2_min)
          if (nimg_count > 0 .and. r2_min <= cutoff2) then
+            if (nimg_count > selfimg) then
+               write(*, *) "Warning: Number of images for pair (", iat, ",", iat, ") exceeds pre-allocated capacity."
+            end if
             self%selfnimg(iat) = nimg_count
             self%selftridx(1:nimg_count, iat) = tridx_arr(1:nimg_count)
             self%nimg_max = max(self%nimg_max, nimg_count)
@@ -374,6 +377,10 @@ contains
 
                            if (nimg_count > 0 .and. r2_min <= cutoff2) then
                               img = img + 1
+
+                              if (nimg_count > crossimg) then
+                                 write(*, *) "Warning: Number of images for pair (", iat, ",", jat, ") exceeds pre-allocated capacity."
+                              end if
 
                               if (size(self%nlat) < img) then
                                  call resize(self%nlat)
@@ -505,7 +512,7 @@ contains
          ! DEFAULT ROUTINE: Optimized for orthogonal classes based on vector magnitudes
          do i = 1, 3
             L_vec = sqrt(sum(lattice(:, i)**2))
-            if (cutoff >= 0.05_wp * L_vec) then
+            if (cutoff >= 0.25_wp * L_vec) then
                selfimg = 12
                crossimg = 6
             end if
@@ -533,12 +540,12 @@ contains
          cross_ij(3) = lattice(1,1)*lattice(2,2) - lattice(2,1)*lattice(1,2)
          H(3) = abs(det) / sqrt(sum(cross_ij**2))
 
-         ! Allocate more defensively for skewed boundary conditions
-         selfimg = 27
-         crossimg = 14
-
          ! Map cells dynamically to the strict real-space thickness
          do i = 1, 3
+            if (cutoff >= 0.25_wp * H(i)) then
+               selfimg = 12
+               crossimg = 6
+            end if
             n_xyz(i) = max(2, ceiling(H(i) / cutoff))
             if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
          end do
