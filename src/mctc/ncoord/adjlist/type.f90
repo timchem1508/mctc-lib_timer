@@ -285,24 +285,10 @@ contains
       img = 0
       self%nimg_max = 0
 
-      ! 2. Fast Inverse Lattice Matrix
-      det = mol%lattice(1,1)*(mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) - &
-         mol%lattice(1,2)*(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) + &
-         mol%lattice(1,3)*(mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1))
+      ! 2. Grid Sizing calculation based on lattice geometry and cutoff
+      call compute_grid(mol%lattice, self%cutoff, lat_inv, det, n_xyz, selfimg, crossimg)
 
-      lat_inv(1,1) =  (mol%lattice(2,2)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,2)) / det
-      lat_inv(1,2) = -(mol%lattice(1,2)*mol%lattice(3,3) - mol%lattice(1,3)*mol%lattice(3,2)) / det
-      lat_inv(1,3) =  (mol%lattice(1,2)*mol%lattice(2,3) - mol%lattice(1,3)*mol%lattice(2,2)) / det
-      lat_inv(2,1) = -(mol%lattice(2,1)*mol%lattice(3,3) - mol%lattice(2,3)*mol%lattice(3,1)) / det
-      lat_inv(2,2) =  (mol%lattice(1,1)*mol%lattice(3,3) - mol%lattice(1,3)*mol%lattice(3,1)) / det
-      lat_inv(2,3) = -(mol%lattice(1,1)*mol%lattice(2,3) - mol%lattice(1,3)*mol%lattice(2,1)) / det
-      lat_inv(3,1) =  (mol%lattice(2,1)*mol%lattice(3,2) - mol%lattice(2,2)*mol%lattice(3,1)) / det
-      lat_inv(3,2) = -(mol%lattice(1,1)*mol%lattice(3,2) - mol%lattice(1,2)*mol%lattice(3,1)) / det
-      lat_inv(3,3) =  (mol%lattice(1,1)*mol%lattice(2,2) - mol%lattice(1,2)*mol%lattice(2,1)) / det
-
-      ! 3. Grid Sizing calculation based on lattice geometry and cutoff
-      call compute_grid(mol%lattice, det, self%cutoff, n_xyz, selfimg, crossimg)
-
+      ! 3. Density estimation for initial buffer sizing
       dens = real(mol%nat, wp)/abs(det)
 
       ! 4. Initial Buffering (Density-based heuristic)
@@ -342,9 +328,6 @@ contains
          ! Handle self-images
          call get_wsc_pairs(trans, zero_vec, nimg_count, tridx_arr, r2_min)
          if (nimg_count > 0 .and. r2_min <= cutoff2) then
-            if (nimg_count > selfimg) then
-               write(*, *) "Warning: Number of images for pair (", iat, ",", iat, ") exceeds pre-allocated capacity."
-            end if
             self%selfnimg(iat) = nimg_count
             self%selftridx(1:nimg_count, iat) = tridx_arr(1:nimg_count)
             self%nimg_max = max(self%nimg_max, nimg_count)
@@ -377,10 +360,6 @@ contains
 
                            if (nimg_count > 0 .and. r2_min <= cutoff2) then
                               img = img + 1
-
-                              if (nimg_count > crossimg) then
-                                 write(*, *) "Warning: Number of images for pair (", iat, ",", jat, ") exceeds pre-allocated capacity."
-                              end if
 
                               if (size(self%nlat) < img) then
                                  call resize(self%nlat)
@@ -475,13 +454,15 @@ contains
    end subroutine get_wsc_pairs
 
    !> Computes safe linked cell grid sub-divisions for any crystal class
-   subroutine compute_grid(lattice, det, cutoff, n_xyz, selfimg, crossimg)
+   subroutine compute_grid(lattice, cutoff, lat_inv, det, n_xyz, selfimg, crossimg)
       !> Lattice vectors [A1 | A2 | A3]
       real(wp), intent(in) :: lattice(3, 3)
-      !> Determinant (Volume) of the lattice
-      real(wp), intent(in) :: det
       !> Interaction cutoff radius
       real(wp), intent(in) :: cutoff
+      !> Determinant (Volume) of the lattice
+      real(wp), intent(out) :: det
+      !> Inverse of the lattice matrix
+      real(wp), intent(out) :: lat_inv(3, 3)
       !> Output: Number of grid subdivisions along each axis
       integer, intent(out) :: n_xyz(3)
       !> Output: Allocation capacity for self-images
@@ -494,62 +475,34 @@ contains
       logical  :: is_orthogonal
       integer  :: i
 
-      selfimg = 1
-      crossimg = 1
+      selfimg = 2
+      crossimg = 2
 
-      ! Check for orthogonality (Cubic, Tetragonal, Orthorhombic/Rectangular)
-      dot_12 = dot_product(lattice(:, 1), lattice(:, 2))
-      dot_23 = dot_product(lattice(:, 2), lattice(:, 3))
-      dot_31 = dot_product(lattice(:, 3), lattice(:, 1))
+      ! 2. Fast Inverse Lattice Matrix
+      det = lattice(1,1)*(lattice(2,2)*lattice(3,3) - lattice(2,3)*lattice(3,2)) - &
+         lattice(1,2)*(lattice(2,1)*lattice(3,3) - lattice(2,3)*lattice(3,1)) + &
+         lattice(1,3)*(lattice(2,1)*lattice(3,2) - lattice(2,2)*lattice(3,1))
 
-      if (abs(dot_12) < tol .and. abs(dot_23) < tol .and. abs(dot_31) < tol) then
-         is_orthogonal = .true.
-      else
-         is_orthogonal = .false.
-      end if
+      lat_inv(1,1) =  (lattice(2,2)*lattice(3,3) - lattice(2,3)*lattice(3,2)) / det
+      lat_inv(1,2) = -(lattice(1,2)*lattice(3,3) - lattice(1,3)*lattice(3,2)) / det
+      lat_inv(1,3) =  (lattice(1,2)*lattice(2,3) - lattice(1,3)*lattice(2,2)) / det
+      lat_inv(2,1) = -(lattice(2,1)*lattice(3,3) - lattice(2,3)*lattice(3,1)) / det
+      lat_inv(2,2) =  (lattice(1,1)*lattice(3,3) - lattice(1,3)*lattice(3,1)) / det
+      lat_inv(2,3) = -(lattice(1,1)*lattice(2,3) - lattice(1,3)*lattice(2,1)) / det
+      lat_inv(3,1) =  (lattice(2,1)*lattice(3,2) - lattice(2,2)*lattice(3,1)) / det
+      lat_inv(3,2) = -(lattice(1,1)*lattice(3,2) - lattice(1,2)*lattice(3,1)) / det
+      lat_inv(3,3) =  (lattice(1,1)*lattice(2,2) - lattice(1,2)*lattice(2,1)) / det
 
-      if (is_orthogonal) then
-         ! DEFAULT ROUTINE: Optimized for orthogonal classes based on vector magnitudes
-         do i = 1, 3
-            L_vec = sqrt(sum(lattice(:, i)**2))
-            if (cutoff >= 0.25_wp * L_vec) then
-               selfimg = 12
-               crossimg = 6
-            end if
-            n_xyz(i) = max(2, ceiling(L_vec / cutoff))
-            if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
-         end do
-      else
-         ! OBLIQUE ROUTINE: Calculates strict perpendicular heights via reciprocal cross products
-
-         ! Perpendicular height H1 (normal to a2 x a3)
-         cross_ij(1) = lattice(2,2)*lattice(3,3) - lattice(3,2)*lattice(2,3)
-         cross_ij(2) = lattice(3,2)*lattice(1,3) - lattice(1,2)*lattice(3,3)
-         cross_ij(3) = lattice(1,2)*lattice(2,3) - lattice(2,2)*lattice(1,3)
-         H(1) = abs(det) / sqrt(sum(cross_ij**2))
-
-         ! Perpendicular height H2 (normal to a3 x a1)
-         cross_ij(1) = lattice(2,3)*lattice(3,1) - lattice(3,3)*lattice(2,1)
-         cross_ij(2) = lattice(3,3)*lattice(1,1) - lattice(1,3)*lattice(3,1)
-         cross_ij(3) = lattice(1,3)*lattice(2,1) - lattice(2,3)*lattice(1,1)
-         H(2) = abs(det) / sqrt(sum(cross_ij**2))
-
-         ! Perpendicular height H3 (normal to a1 x a2)
-         cross_ij(1) = lattice(2,1)*lattice(3,2) - lattice(3,1)*lattice(2,2)
-         cross_ij(2) = lattice(3,1)*lattice(1,2) - lattice(1,1)*lattice(3,2)
-         cross_ij(3) = lattice(1,1)*lattice(2,2) - lattice(2,1)*lattice(1,2)
-         H(3) = abs(det) / sqrt(sum(cross_ij**2))
-
-         ! Map cells dynamically to the strict real-space thickness
-         do i = 1, 3
-            if (cutoff >= 0.25_wp * H(i)) then
-               selfimg = 12
-               crossimg = 6
-            end if
-            n_xyz(i) = max(2, ceiling(H(i) / cutoff))
-            if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
-         end do
-      end if
+      ! Optimized for orthogonal classes based on vector magnitudes
+      do i = 1, 3
+         L_vec = sqrt(sum(lattice(:, i)**2))
+         if (cutoff >= 0.05_wp * L_vec) then
+            selfimg = 12
+            crossimg = 6
+         end if
+         n_xyz(i) = max(2, ceiling(L_vec / cutoff))
+         if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
+      end do
 
    end subroutine compute_grid
 
