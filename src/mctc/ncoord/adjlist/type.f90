@@ -472,13 +472,12 @@ contains
 
       real(wp) :: L_vec, H(3), cross_ij(3)
       real(wp) :: dot_12, dot_23, dot_31
-      logical  :: is_orthogonal
       integer  :: i
 
       selfimg = 2
       crossimg = 2
 
-      ! 2. Fast Inverse Lattice Matrix
+      ! Inverse Lattice Matrix
       det = lattice(1,1)*(lattice(2,2)*lattice(3,3) - lattice(2,3)*lattice(3,2)) - &
          lattice(1,2)*(lattice(2,1)*lattice(3,3) - lattice(2,3)*lattice(3,1)) + &
          lattice(1,3)*(lattice(2,1)*lattice(3,2) - lattice(2,2)*lattice(3,1))
@@ -493,14 +492,33 @@ contains
       lat_inv(3,2) = -(lattice(1,1)*lattice(3,2) - lattice(1,2)*lattice(3,1)) / det
       lat_inv(3,3) =  (lattice(1,1)*lattice(2,2) - lattice(1,2)*lattice(2,1)) / det
 
-      ! Optimized for orthogonal classes based on vector magnitudes
+      ! Calculates strict perpendicular heights via reciprocal cross products
+
+      ! Perpendicular height H1 (normal to a2 x a3)
+      cross_ij(1) = lattice(2,2)*lattice(3,3) - lattice(3,2)*lattice(2,3)
+      cross_ij(2) = lattice(3,2)*lattice(1,3) - lattice(1,2)*lattice(3,3)
+      cross_ij(3) = lattice(1,2)*lattice(2,3) - lattice(2,2)*lattice(1,3)
+      H(1) = abs(det) / sqrt(sum(cross_ij**2))
+
+      ! Perpendicular height H2 (normal to a3 x a1)
+      cross_ij(1) = lattice(2,3)*lattice(3,1) - lattice(3,3)*lattice(2,1)
+      cross_ij(2) = lattice(3,3)*lattice(1,1) - lattice(1,3)*lattice(3,1)
+      cross_ij(3) = lattice(1,3)*lattice(2,1) - lattice(2,3)*lattice(1,1)
+      H(2) = abs(det) / sqrt(sum(cross_ij**2))
+
+      ! Perpendicular height H3 (normal to a1 x a2)
+      cross_ij(1) = lattice(2,1)*lattice(3,2) - lattice(3,1)*lattice(2,2)
+      cross_ij(2) = lattice(3,1)*lattice(1,2) - lattice(1,1)*lattice(3,2)
+      cross_ij(3) = lattice(1,1)*lattice(2,2) - lattice(2,1)*lattice(1,2)
+      H(3) = abs(det) / sqrt(sum(cross_ij**2))
+
+      ! Map cells dynamically to the strict real-space thickness
       do i = 1, 3
-         L_vec = sqrt(sum(lattice(:, i)**2))
-         if (cutoff >= 0.05_wp * L_vec) then
+         if (cutoff >= 0.05_wp * H(i)) then
             selfimg = 12
             crossimg = 6
          end if
-         n_xyz(i) = max(2, ceiling(L_vec / cutoff))
+         n_xyz(i) = max(2, ceiling(H(i) / cutoff))
          if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
       end do
 
