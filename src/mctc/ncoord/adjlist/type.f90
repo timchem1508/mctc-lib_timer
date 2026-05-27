@@ -193,54 +193,102 @@ contains
       if (any(mol%periodic)) call resize(self%nltr, prob * mol%nat)
 
       ! 3. Triple loop search over nearby cells (O(N) time)
-      do iat = 1, mol%nat
-         self%inl(iat) = img
 
-         ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
-         iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
-         iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
+      if (any(mol%periodic)) then
+         do iat = 1, mol%nat
+            self%inl(iat) = img
 
-         ! Check 27 neighboring cells (3x3x3 block)
-         do dk = -1, 1; do dj = -1, 1; do di = -1, 1
-                  jx = ix + di; jy = iy + dj; jz = iz + dk
+            ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
+            iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
+            iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
 
-                  ! Skip cells outside the defined grid
-                  if (jx < 1 .or. jx > n_xyz(1) .or. &
-                     jy < 1 .or. jy > n_xyz(2) .or. &
-                     jz < 1 .or. jz > n_xyz(3)) cycle
+            ! Check 27 neighboring cells (3x3x3 block)
+            do dk = -1, 1; do dj = -1, 1; do di = -1, 1
+                     jx = ix + di; jy = iy + dj; jz = iz + dk
 
-                  jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
-                  jat = head(jc)
+                     ! Skip cells outside the defined grid
+                     if (jx < 1 .or. jx > n_xyz(1) .or. &
+                        jy < 1 .or. jy > n_xyz(2) .or. &
+                        jz < 1 .or. jz > n_xyz(3)) cycle
 
-                  do while (jat > 0)
+                     jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
+                     jat = head(jc)
 
-                     ! Symmetrical optimization
-                     if (jat > iat .or. self%complete) then
-                        jat = nxt(jat)
-                        cycle
-                     end if
+                     do while (jat > 0)
 
-                     ! Check all translation images for this atom pair
-                     do itr = 1, size(self%trans, 2)
-                        vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
-                        r2 = sum(vec**2)
-
-                        ! Standard distance check and self-interaction exclusion
-                        if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
-
-                        img = img + 1
-                        if (size(self%nlat) < img) call resize(self%nlat)
-                        self%nlat(img) = jat
-                        if (any(mol%periodic)) then
-                           if (size(self%nltr) < img) call resize(self%nltr)
-                           self%nltr(img) = itr
+                        ! Symmetrical optimization
+                        if (jat > iat .or. self%complete) then
+                           jat = nxt(jat)
+                           cycle
                         end if
+
+                        ! Check all translation images for this atom pair
+                        do itr = 1, size(self%trans, 2)
+                           vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
+                           r2 = sum(vec**2)
+
+                           ! Standard distance check and self-interaction exclusion
+                           if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
+
+                           img = img + 1
+                           if (size(self%nlat) < img) call resize(self%nlat)
+                           self%nlat(img) = jat
+                           if (any(mol%periodic)) then
+                              if (size(self%nltr) < img) call resize(self%nltr)
+                              self%nltr(img) = itr
+                           end if
+                        end do
+                        jat = nxt(jat)
                      end do
-                     jat = nxt(jat)
-                  end do
-               end do; end do; end do
-         self%nnl(iat) = img - self%inl(iat)
-      end do
+                  end do; end do; end do
+            self%nnl(iat) = img - self%inl(iat)
+         end do
+      else
+         do iat = 1, mol%nat
+            self%inl(iat) = img
+
+            ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
+            iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
+            iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
+
+            ! Check 27 neighboring cells (3x3x3 block)
+            do dk = -1, 1; do dj = -1, 1; do di = -1, 1
+                     jx = ix + di; jy = iy + dj; jz = iz + dk
+
+                     ! Skip cells outside the defined grid
+                     if (jx < 1 .or. jx > n_xyz(1) .or. &
+                        jy < 1 .or. jy > n_xyz(2) .or. &
+                        jz < 1 .or. jz > n_xyz(3)) cycle
+
+                     jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
+                     jat = head(jc)
+
+                     do while (jat > 0)
+
+                        ! Symmetrical optimization
+                        if (jat > iat .or. self%complete) then
+                           jat = nxt(jat)
+                           cycle
+                        end if
+
+                        ! Check all translation images for this atom pair
+                        do itr = 1, size(self%trans, 2)
+                           vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
+                           r2 = sum(vec**2)
+
+                           ! Standard distance check and self-interaction exclusion
+                           if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
+
+                           img = img + 1
+                           if (size(self%nlat) < img) call resize(self%nlat)
+                           self%nlat(img) = jat
+                        end do
+                        jat = nxt(jat)
+                     end do
+                  end do; end do; end do
+            self%nnl(iat) = img - self%inl(iat)
+         end do
+      end if
 
       ! Cleanup and final sizing
       if (allocated(head)) deallocate(head)
