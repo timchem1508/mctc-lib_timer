@@ -567,7 +567,6 @@ contains
             crossimg = 6
          end if
          n_xyz(i) = max(2, floor(H(i) / cutoff))
-         if (mod(n_xyz(i), 2) /= 0) n_xyz(i) = n_xyz(i) + 1
       end do
 
    end subroutine compute_grid
