@@ -79,14 +79,18 @@ module mctc_ncoord_adjlist_type
       !> Wiegner-Seitz cell parameters
       !> Maximal number of interaction images
       integer :: nimg_max
+      !> Pointer index of the Wiegner-Seitz translation vector for self-interaction
+      integer, allocatable :: sitr(:)
+      !> Pointer index of the Wiegner-Seitz translation vector for each neighbour
+      integer, allocatable :: itr(:)
       !> Number of images per cross-interaction
       integer, allocatable :: nimg(:)
       !> Number of images per self-interaction
       integer, allocatable :: selfnimg(:)
       !> Primitive unit cell image index per cross-interaction
-      integer, allocatable :: tridx(:, :)
+      integer, allocatable :: tridx(:)
       !> Primitive unit cell image index per self-interaction
-      integer, allocatable :: selftridx(:, :)
+      integer, allocatable :: selftridx(:)
    end type adjacency_list
 
    ! Default input
@@ -143,13 +147,14 @@ contains
 
    end subroutine new_adjacency_list
 
-   !> Generator for neighbourlist using a Hybrid List approach (O(N) scaling)
+!> Parallel Generator for neighbourlist using a Hybrid List approach (Fully Parallelized LAMMPS Style)
    subroutine generate_hybrid(self, mol)
+      use omp_lib ! Required for OpenMP runtime functions
+
       !> Instance of the neighbourlist
       type(adjacency_list), intent(inout) :: self
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
-
 
       integer :: iat, jat, itr, img, ic, jc
       integer :: ix, iy, iz, jx, jy, jz, di, dj, dk
@@ -159,54 +164,85 @@ contains
       real(wp) :: vol, dens
       integer :: prob
 
+      ! OpenMP specific variables
+      integer :: nthreads, tid, max_neigh_per_thread, t, t_start, t_size
+      integer, allocatable :: thread_img(:)           ! Track current neighbor count per thread
+      integer, allocatable :: thread_global_start(:)  ! Global offset for stitching phase
+      integer, allocatable :: alloc_tid(:)            ! Track which thread processed which atom
+      integer, allocatable :: thread_nlat(:,:)        ! Thread-local neighbor storage [max_neigh, nthreads]
+      integer, allocatable :: thread_nltr(:,:)        ! Thread-local translation storage [max_neigh, nthreads]
+
       img = 0
       cutoff2 = self%cutoff**2
 
-      ! 1. Define the grid boundaries and dimensions
+      ! 1. Define the grid boundaries and dimensions (Serial Baseline)
       min_xyz = minval(mol%xyz, dim=2) - buffer
       max_xyz = maxval(mol%xyz, dim=2) + buffer
 
       vol = (max_xyz(1)-min_xyz(1)) * (max_xyz(2)-min_xyz(2)) * (max_xyz(3)-min_xyz(3))
       dens = mol%nat / vol
-      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 4.0_wp))
+      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 500.0_wp))
 
       ! Number of cells: must be at least 1, and cell width >= cutoff
       n_xyz = max(1, floor((max_xyz - min_xyz) / (self%cutoff + eps)))
       cell_w = (max_xyz - min_xyz) / (real(n_xyz, wp) + eps) + eps
 
-      ! 2. Build the Linked List
+      ! 2. Build the Linked List IN PARALLEL using Atomic Capture
       allocate(head(product(n_xyz)), source=0)
       allocate(nxt(mol%nat), source=0)
 
+      !$omp parallel do private(iat, ix, iy, iz, ic) &
+      !$omp shared(mol, n_xyz, min_xyz, cell_w, head, nxt)
       do iat = 1, mol%nat
          ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
          iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
          iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
 
          ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
+
+         ! CRITICAL: Atomic capture prevents race conditions on head(ic)
+         ! while building the cell linked list simultaneously across threads
+         !$omp atomic capture
          nxt(iat) = head(ic)
          head(ic) = iat
+         !$omp end atomic
       end do
+      !$omp end parallel do
 
-      ! Pre-allocate neighbor arrays
-      call resize(self%nlat, prob * mol%nat)
-      if (any(mol%periodic)) call resize(self%nltr, prob * mol%nat)
+      ! 3. Setup OpenMP Thread-Local Environments
+      !$omp parallel
+      !$omp master
+      nthreads = omp_get_num_threads()
+      !$omp end master
+      !$omp end parallel
 
-      ! 3. Triple loop search over nearby cells (O(N) time)
+      ! Allocate thread tracking metrics
+      allocate(thread_img(nthreads), source=0)
+      allocate(thread_global_start(nthreads), source=0)
+      allocate(alloc_tid(mol%nat), source=0)
 
+      ! Estimate a safe thread-local allocation size with a safety buffer
+      max_neigh_per_thread = (prob * mol%nat) / nthreads + 50000
+      allocate(thread_nlat(max_neigh_per_thread, nthreads))
+      if (any(mol%periodic)) allocate(thread_nltr(max_neigh_per_thread, nthreads))
+
+      ! 4. Threaded Loop Search over nearby cells
       if (any(mol%periodic)) then
+         !$omp parallel do schedule(guided) &
+         !$omp private(iat, tid, ix, iy, iz, dk, dj, di, jx, jy, jz, jc, jat, itr, vec, r2) &
+         !$omp shared(mol, self, head, nxt, thread_img, thread_nlat, thread_nltr, cell_w, min_xyz, n_xyz, cutoff2, alloc_tid, max_neigh_per_thread)
          do iat = 1, mol%nat
-            self%inl(iat) = img
+            tid = omp_get_thread_num() + 1
+            alloc_tid(iat) = tid
+            self%inl(iat) = thread_img(tid) ! Temporary store of local thread offset
 
             ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
             iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
             iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
 
-            ! Check 27 neighboring cells (3x3x3 block)
             do dk = -1, 1; do dj = -1, 1; do di = -1, 1
                      jx = ix + di; jy = iy + dj; jz = iz + dk
 
-                     ! Skip cells outside the defined grid
                      if (jx < 1 .or. jx > n_xyz(1) .or. &
                         jy < 1 .or. jy > n_xyz(2) .or. &
                         jz < 1 .or. jz > n_xyz(3)) cycle
@@ -215,47 +251,49 @@ contains
                      jat = head(jc)
 
                      do while (jat > 0)
-
-                        ! Symmetrical optimization
                         if (jat > iat .or. self%complete) then
-                           jat = nxt(jat)
-                           cycle
+                           jat = nxt(jat); cycle
                         end if
 
-                        ! Check all translation images for this atom pair
                         do itr = 1, size(self%trans, 2)
                            vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
                            r2 = sum(vec**2)
 
-                           ! Standard distance check and self-interaction exclusion
                            if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
 
-                           img = img + 1
-                           if (size(self%nlat) < img) call resize(self%nlat)
-                           self%nlat(img) = jat
-                           if (any(mol%periodic)) then
-                              if (size(self%nltr) < img) call resize(self%nltr)
-                              self%nltr(img) = itr
+                           ! Thread-safe: local pointer updates
+                           thread_img(tid) = thread_img(tid) + 1
+
+                           if (thread_img(tid) > max_neigh_per_thread) then
+                              error stop "Thread local neighbor buffer overflow! Increase safety margin."
                            end if
+
+                           thread_nlat(thread_img(tid), tid) = jat
+                           thread_nltr(thread_img(tid), tid) = itr
                         end do
                         jat = nxt(jat)
                      end do
                   end do; end do; end do
-            self%nnl(iat) = img - self%inl(iat)
+            self%nnl(iat) = thread_img(tid) - self%inl(iat)
          end do
-      else
+         !$omp end parallel do
+
+      else ! Non-periodic branch
+         !$omp parallel do schedule(guided) &
+         !$omp private(iat, tid, ix, iy, iz, dk, dj, di, jx, jy, jz, jc, jat, vec, r2) &
+         !$omp shared(mol, self, head, nxt, thread_img, thread_nlat, cell_w, min_xyz, n_xyz, cutoff2, alloc_tid, max_neigh_per_thread)
          do iat = 1, mol%nat
-            self%inl(iat) = img
+            tid = omp_get_thread_num() + 1
+            alloc_tid(iat) = tid
+            self%inl(iat) = thread_img(tid)
 
             ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
             iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
             iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
 
-            ! Check 27 neighboring cells (3x3x3 block)
             do dk = -1, 1; do dj = -1, 1; do di = -1, 1
                      jx = ix + di; jy = iy + dj; jz = iz + dk
 
-                     ! Skip cells outside the defined grid
                      if (jx < 1 .or. jx > n_xyz(1) .or. &
                         jy < 1 .or. jy > n_xyz(2) .or. &
                         jz < 1 .or. jz > n_xyz(3)) cycle
@@ -264,41 +302,74 @@ contains
                      jat = head(jc)
 
                      do while (jat > 0)
-
-                        ! Symmetrical optimization
                         if (jat > iat .or. self%complete) then
-                           jat = nxt(jat)
-                           cycle
+                           jat = nxt(jat); cycle
                         end if
 
-                        ! Check all translation images for this atom pair
-                        do itr = 1, size(self%trans, 2)
-                           vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
-                           r2 = sum(vec**2)
+                        vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
+                        r2 = sum(vec**2)
 
-                           ! Standard distance check and self-interaction exclusion
-                           if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
+                        if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) then
+                           jat = nxt(jat); cycle
+                        end if
 
-                           img = img + 1
-                           if (size(self%nlat) < img) call resize(self%nlat)
-                           self%nlat(img) = jat
-                        end do
+                        thread_img(tid) = thread_img(tid) + 1
+
+                        if (thread_img(tid) > max_neigh_per_thread) then
+                           error stop "Thread local neighbor buffer overflow! Increase safety margin."
+                        end if
+
+                        thread_nlat(thread_img(tid), tid) = jat
                         jat = nxt(jat)
                      end do
                   end do; end do; end do
-            self%nnl(iat) = img - self%inl(iat)
+            self%nnl(iat) = thread_img(tid) - self%inl(iat)
          end do
+         !$omp end parallel do
       end if
 
-      ! Cleanup and final sizing
-      if (allocated(head)) deallocate(head)
-      if (allocated(nxt)) deallocate(nxt)
+      ! 5. The Stitching Phase (Prefix Sum Calculation)
+      thread_global_start(1) = 0
+      do t = 2, nthreads
+         thread_global_start(t) = thread_global_start(t-1) + thread_img(t-1)
+      end do
+      img = thread_global_start(nthreads) + thread_img(nthreads)
+
+      ! Shift atom internal offsets (`self%inl`) to match the unified global array
+      !$omp parallel do private(iat, tid) shared(self, alloc_tid, thread_global_start, mol)
+      do iat = 1, mol%nat
+         tid = alloc_tid(iat)
+         self%inl(iat) = self%inl(iat) + thread_global_start(tid)
+      end do
+      !$omp end parallel do
+
+      ! Reallocate global storage targets to the exact final size
       call resize(self%nlat, img)
       if (any(mol%periodic)) call resize(self%nltr, img)
 
+      ! Parallel stream-copy data from thread buffers into global structures
+      !$omp parallel private(tid, t_start, t_size) shared(self, thread_global_start, thread_img, thread_nlat, thread_nltr, mol)
+      tid = omp_get_thread_num() + 1
+      t_start = thread_global_start(tid)
+      t_size = thread_img(tid)
+
+      if (t_size > 0) then
+         self%nlat(t_start + 1 : t_start + t_size) = thread_nlat(1 : t_size, tid)
+         if (any(mol%periodic)) then
+            self%nltr(t_start + 1 : t_start + t_size) = thread_nltr(1 : t_size, tid)
+         end if
+      end if
+      !$omp end parallel
+
+      ! 6. Cleanup Memory
+      if (allocated(head)) deallocate(head)
+      if (allocated(nxt)) deallocate(nxt)
+      deallocate(thread_img, thread_global_start, alloc_tid, thread_nlat)
+      if (allocated(thread_nltr)) deallocate(thread_nltr)
+
    end subroutine generate_hybrid
 
-   !> Generator of the Hybrid List for Periodic Systems based on Wiegner-Seitz Cell (O(N) scaling)
+!> Generator of the Hybrid List for Periodic Systems based on Wiegner-Seitz Cell (O(N) scaling)
    subroutine generate_wsc(self, mol)
       !> Instance of the neighbourlist
       type(adjacency_list), intent(inout) :: self
@@ -317,11 +388,14 @@ contains
       real(wp) :: fract(3), xyz_wrap(3, mol%nat)
       real(wp), allocatable :: trans(:, :)
       real(wp) :: vec(3), zero_vec(3)
-      integer :: current_capacity
-      integer, allocatable :: tmp_nimg(:), tmp_tridx(:,:)
+
+      integer :: current_capacity, new_size
       integer :: selfimg, crossimg, prob
+      integer :: ptr_tr, ptr_self_tr
 
       zero_vec = 0.0_wp
+      ptr_tr = 0
+      ptr_self_tr = 0
 
       ! 1. Lattice setup and jacket translations
       call get_lattice_points(mol%periodic, mol%lattice, sqrt(epsilon(0.0_wp)), trans)
@@ -342,6 +416,7 @@ contains
       ! 4. Initial Buffering (Density-based heuristic)
       prob = max(init_size, int(dens * self%cutoff**3.0_wp * 4.0_wp))
       current_capacity = mol%nat * prob
+
       allocate(head(product(n_xyz)), source=0)
       allocate(nxt(mol%nat), source=0)
       allocate(checked(mol%nat), source=.false.)
@@ -349,10 +424,17 @@ contains
       call resize(self%nlat, current_capacity)
       if (allocated(self%nimg)) deallocate(self%nimg)
       if (allocated(self%tridx)) deallocate(self%tridx)
+      if (allocated(self%itr)) deallocate(self%itr)
+      if (allocated(self%sitr)) deallocate(self%sitr)
+      if (allocated(self%selfnimg)) deallocate(self%selfnimg)
+      if (allocated(self%selftridx)) deallocate(self%selftridx)
+
       allocate(self%nimg(current_capacity), source=0)
-      allocate(self%tridx(crossimg, current_capacity), source=0)
+      allocate(self%itr(current_capacity), source=0)
+      allocate(self%tridx(4 * current_capacity), source=0)
+      allocate(self%sitr(mol%nat), source=0)
       allocate(self%selfnimg(mol%nat), source=0)
-      allocate(self%selftridx(selfimg, mol%nat), source=0)
+      allocate(self%selftridx(4 * mol%nat), source=0)
 
       ! 5. Build Linked Cell List
       do iat = 1, mol%nat
@@ -372,13 +454,21 @@ contains
       ! 6. Main Search Loop
       do iat = 1, mol%nat
          self%inl(iat) = img
+         self%sitr(iat) = ptr_self_tr
 
          ! Handle self-images
          call get_wsc_pairs(trans, zero_vec, nimg_count, tridx_arr, r2_min)
          if (nimg_count > 0 .and. r2_min <= cutoff2) then
             self%selfnimg(iat) = nimg_count
-            self%selftridx(1:nimg_count, iat) = tridx_arr(1:nimg_count)
             self%nimg_max = max(self%nimg_max, nimg_count)
+
+            ! Check capacity of self translation indices
+            if (ptr_self_tr + nimg_count > size(self%selftridx)) then
+               call resize(self%selftridx, max(size(self%selftridx) * 2, ptr_self_tr + nimg_count))
+            end if
+
+            self%selftridx(self%sitr(iat) + 1 : self%sitr(iat) + self%selfnimg(iat)) = tridx_arr(1:nimg_count)
+            ptr_self_tr = ptr_self_tr + nimg_count
          end if
 
          fract(:) = matmul(lat_inv, mol%xyz(:, iat))
@@ -409,20 +499,26 @@ contains
                            if (nimg_count > 0 .and. r2_min <= cutoff2) then
                               img = img + 1
 
-                              if (size(self%nlat) < img) then
-                                 call resize(self%nlat)
-                                 allocate(tmp_nimg(size(self%nlat)))
-                                 tmp_nimg(1:img-1) = self%nimg(1:img-1)
-                                 call move_alloc(tmp_nimg, self%nimg)
-                                 allocate(tmp_tridx(crossimg, size(self%nlat)))
-                                 tmp_tridx(:, 1:img-1) = self%tridx(:, 1:img-1)
-                                 call move_alloc(tmp_tridx, self%tridx)
+                              ! Check cross-interaction capacity
+                              if (img > size(self%nlat)) then
+                                 new_size = size(self%nlat) * 2
+                                 call resize(self%nlat, new_size)
+                                 call resize(self%nimg, new_size)
+                                 call resize(self%itr, new_size)
                               end if
 
                               self%nlat(img) = jat
                               self%nimg(img) = nimg_count
-                              self%tridx(1:nimg_count, img) = tridx_arr(1:nimg_count)
+                              self%itr(img) = ptr_tr
                               self%nimg_max = max(self%nimg_max, nimg_count)
+
+                              ! Check capacity of cross translation indices
+                              if (ptr_tr + nimg_count > size(self%tridx)) then
+                                 call resize(self%tridx, max(size(self%tridx) * 2, ptr_tr + nimg_count))
+                              end if
+
+                              self%tridx(self%itr(img) + 1 : self%itr(img) + self%nimg(img)) = tridx_arr(1:nimg_count)
+                              ptr_tr = ptr_tr + nimg_count
                            end if
                         end if
                      end if
@@ -446,15 +542,12 @@ contains
          self%nnl(iat) = img - self%inl(iat)
       end do
 
-      ! Final Cleanup and Exact Sizing
+      ! Final Cleanup and Exact Sizing for all CSR Arrays
       call resize(self%nlat, img)
-      allocate(tmp_nimg(img))
-      tmp_nimg(1:img) = self%nimg(1:img)
-      call move_alloc(tmp_nimg, self%nimg)
-
-      allocate(tmp_tridx(crossimg, img))
-      tmp_tridx(:, 1:img) = self%tridx(:, 1:img)
-      call move_alloc(tmp_tridx, self%tridx)
+      call resize(self%nimg, img)
+      call resize(self%itr, img)
+      call resize(self%tridx, ptr_tr)
+      call resize(self%selftridx, ptr_self_tr)
 
    end subroutine generate_wsc
 
@@ -572,4 +665,3 @@ contains
    end subroutine compute_grid
 
 end module mctc_ncoord_adjlist_type
-
