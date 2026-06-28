@@ -179,10 +179,6 @@ contains
       min_xyz = minval(mol%xyz, dim=2) - buffer
       max_xyz = maxval(mol%xyz, dim=2) + buffer
 
-      vol = (max_xyz(1)-min_xyz(1)) * (max_xyz(2)-min_xyz(2)) * (max_xyz(3)-min_xyz(3))
-      dens = mol%nat / vol
-      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 500.0_wp))
-
       ! Number of cells: must be at least 1, and cell width >= cutoff
       n_xyz = max(1, floor((max_xyz - min_xyz) / (self%cutoff + eps)))
       cell_w = (max_xyz - min_xyz) / (real(n_xyz, wp) + eps) + eps
@@ -208,6 +204,10 @@ contains
          !$omp end atomic
       end do
       !$omp end parallel do
+
+      vol = (max_xyz(1)-min_xyz(1)) * (max_xyz(2)-min_xyz(2)) * (max_xyz(3)-min_xyz(3)) * real(count(head /= 0), wp) / real(product(n_xyz), wp)
+      dens = mol%nat / vol
+      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 4.0_wp))
 
       ! 3. Setup OpenMP Thread-Local Environments
       !$omp parallel
@@ -385,7 +385,7 @@ contains
       integer :: n_xyz(3), ntr, nimg_count
       integer :: tridx_arr(27)
       real(wp) :: cutoff2, r2_min, dens
-      real(wp) :: lat_inv(3, 3), det
+      real(wp) :: lat_inv(3, 3), det, vol
       real(wp) :: fract(3), xyz_wrap(3, mol%nat)
       real(wp), allocatable :: trans(:, :)
       real(wp) :: vec(3), zero_vec(3)
@@ -422,8 +422,6 @@ contains
       self%nimg_max = 0
 
       call compute_grid(mol%lattice, self%cutoff, lat_inv, det, n_xyz, selfimg, crossimg)
-      dens = real(mol%nat, wp)/abs(det)
-      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 4.0_wp))
 
       ! 2. Thread Environment Setup
       !$omp parallel
@@ -432,13 +430,37 @@ contains
       !$omp end master
       !$omp end parallel
 
+      ! 3. Build Linked Cell List (Parallelized with Atomic Capture)
+      allocate(head(product(n_xyz)), source=0)
+      allocate(nxt(mol%nat), source=0)
+
+      !$omp parallel do private(iat, fract, ix, iy, iz, ic) &
+      !$omp shared(mol, lat_inv, xyz_wrap, n_xyz, head, nxt)
+      do iat = 1, mol%nat
+         fract(:) = matmul(lat_inv, mol%xyz(:, iat))
+         fract(:) = fract(:) - floor(fract(:))
+         xyz_wrap(:, iat) = matmul(mol%lattice, fract)
+
+         ix = min(n_xyz(1), max(1, int(fract(1) * n_xyz(1)) + 1))
+         iy = min(n_xyz(2), max(1, int(fract(2) * n_xyz(2)) + 1))
+         iz = min(n_xyz(3), max(1, int(fract(3) * n_xyz(3)) + 1))
+         ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
+
+         !$omp atomic capture
+         nxt(iat) = head(ic)
+         head(ic) = iat
+         !$omp end atomic
+      end do
+      !$omp end parallel do
+
       ! Buffer estimates (oversized to prevent resizing)
+      vol = abs(det) * real(count(head /= 0), wp) / real(product(n_xyz), wp)
+      dens = real(mol%nat, wp)/abs(det)
+      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 4.0_wp))
+
       max_neigh_per_thread = ((mol%nat * prob) / nthreads) + 50000
       max_tr_per_thread = max_neigh_per_thread * 4
       max_self_tr_per_thread = (mol%nat / nthreads) * 8 + 5000
-
-      allocate(head(product(n_xyz)), source=0)
-      allocate(nxt(mol%nat), source=0)
 
       allocate(thread_img(nthreads), source=0)
       allocate(thread_ptr_tr(nthreads), source=0)
@@ -458,26 +480,6 @@ contains
 
       if (.not. allocated(self%sitr)) allocate(self%sitr(mol%nat), source=0)
       if (.not. allocated(self%selfnimg)) allocate(self%selfnimg(mol%nat), source=0)
-
-      ! 3. Build Linked Cell List (Parallelized with Atomic Capture)
-      !$omp parallel do private(iat, fract, ix, iy, iz, ic) &
-      !$omp shared(mol, lat_inv, xyz_wrap, n_xyz, head, nxt)
-      do iat = 1, mol%nat
-         fract(:) = matmul(lat_inv, mol%xyz(:, iat))
-         fract(:) = fract(:) - floor(fract(:))
-         xyz_wrap(:, iat) = matmul(mol%lattice, fract)
-
-         ix = min(n_xyz(1), max(1, int(fract(1) * n_xyz(1)) + 1))
-         iy = min(n_xyz(2), max(1, int(fract(2) * n_xyz(2)) + 1))
-         iz = min(n_xyz(3), max(1, int(fract(3) * n_xyz(3)) + 1))
-         ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
-
-         !$omp atomic capture
-         nxt(iat) = head(ic)
-         head(ic) = iat
-         !$omp end atomic
-      end do
-      !$omp end parallel do
 
       ! 4. Main Search Loop (Parallelized)
       !$omp parallel do schedule(guided) &
