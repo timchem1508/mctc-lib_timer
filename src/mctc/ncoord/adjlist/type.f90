@@ -196,8 +196,6 @@ contains
 
          ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
 
-         ! CRITICAL: Atomic capture prevents race conditions on head(ic)
-         ! while building the cell linked list simultaneously across threads
          !$omp atomic capture
          nxt(iat) = head(ic)
          head(ic) = iat
@@ -205,9 +203,10 @@ contains
       end do
       !$omp end parallel do
 
-      vol = (max_xyz(1)-min_xyz(1)) * (max_xyz(2)-min_xyz(2)) * (max_xyz(3)-min_xyz(3)) * real(count(head /= 0), wp) / real(product(n_xyz), wp)
+      vol = product(max_xyz - min_xyz) * real(count(head /= 0), wp) / real(product(n_xyz), wp)
       dens = mol%nat / vol
-      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 4.0_wp))
+      prob = max(init_size, ceiling(dens * self%cutoff**3.0_wp * 4.0_wp))
+      write(*, *) " estimated neighbors: ", prob*mol%nat
 
       ! 3. Setup OpenMP Thread-Local Environments
       !$omp parallel
@@ -344,7 +343,10 @@ contains
       !$omp end parallel do
 
       ! Reallocate global storage targets to the exact final size
+
       call resize(self%nlat, img)
+      write(*, *) "size of neighborlist: ", size(self%nlat)
+      write(*, *) "estimation accuracy ", real(size(self%nlat), wp) / real(prob*mol%nat, wp)
       if (any(mol%periodic)) call resize(self%nltr, img)
 
       ! Parallel stream-copy data from thread buffers into global structures
@@ -390,7 +392,7 @@ contains
       real(wp), allocatable :: trans(:, :)
       real(wp) :: vec(3), zero_vec(3)
 
-      integer :: selfimg, crossimg, prob
+      integer :: prob
       integer :: ptr_tr, ptr_self_tr
 
       ! OpenMP specific variables
@@ -421,7 +423,7 @@ contains
       img = 0
       self%nimg_max = 0
 
-      call compute_grid(mol%lattice, self%cutoff, lat_inv, det, n_xyz, selfimg, crossimg)
+      call compute_grid(mol%lattice, self%cutoff, lat_inv, det, n_xyz)
 
       ! 2. Thread Environment Setup
       !$omp parallel
@@ -456,7 +458,8 @@ contains
       ! Buffer estimates (oversized to prevent resizing)
       vol = abs(det) * real(count(head /= 0), wp) / real(product(n_xyz), wp)
       dens = real(mol%nat, wp)/abs(det)
-      prob = max(init_size, int(dens * self%cutoff**3.0_wp * 4.0_wp))
+      prob = max(init_size, ceiling(dens * self%cutoff**3.0_wp * 4.0_wp))
+      write(*, *) " estimated neighbors: ", prob*mol%nat
 
       max_neigh_per_thread = ((mol%nat * prob) / nthreads) + 50000
       max_tr_per_thread = max_neigh_per_thread * 4
@@ -584,6 +587,9 @@ contains
       call resize(self%tridx, ptr_tr)
       call resize(self%selftridx, ptr_self_tr)
 
+      write(*, *) "size of neighborlist: ", size(self%nlat)
+      write(*, *) "estimation accuracy ", real(size(self%nlat), wp) / real(prob*mol%nat, wp)
+
       !$omp parallel private(tid) shared(self, thread_nlat, thread_nimg, thread_itr, &
       !$omp thread_tridx, thread_selftridx, global_img_start, global_tr_start, global_self_tr_start)
       tid = omp_get_thread_num() + 1
@@ -660,7 +666,7 @@ contains
    end subroutine get_wsc_pairs
 
    !> Computes safe linked cell grid sub-divisions for any crystal class
-   subroutine compute_grid(lattice, cutoff, lat_inv, det, n_xyz, selfimg, crossimg)
+   subroutine compute_grid(lattice, cutoff, lat_inv, det, n_xyz)
       !> Lattice vectors [A1 | A2 | A3]
       real(wp), intent(in) :: lattice(3, 3)
       !> Interaction cutoff radius
@@ -671,17 +677,10 @@ contains
       real(wp), intent(out) :: lat_inv(3, 3)
       !> Output: Number of grid subdivisions along each axis
       integer, intent(out) :: n_xyz(3)
-      !> Output: Allocation capacity for self-images
-      integer, intent(out) :: selfimg
-      !> Output: Allocation capacity for cross-images
-      integer, intent(out) :: crossimg
 
       real(wp) :: L_vec, H(3), cross_ij(3)
       real(wp) :: dot_12, dot_23, dot_31
       integer  :: i
-
-      selfimg = 2
-      crossimg = 2
 
       ! Inverse Lattice Matrix
       det = lattice(1,1)*(lattice(2,2)*lattice(3,3) - lattice(2,3)*lattice(3,2)) - &
@@ -720,10 +719,6 @@ contains
 
       ! Map cells dynamically to the strict real-space thickness
       do i = 1, 3
-         if (cutoff >= 0.05_wp * H(i)) then
-            selfimg = 12
-            crossimg = 6
-         end if
          n_xyz(i) = max(2, floor(H(i) / cutoff))
       end do
 
