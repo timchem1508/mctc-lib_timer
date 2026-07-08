@@ -150,6 +150,7 @@ contains
 !> Parallel Generator for neighbourlist using a Hybrid List approach (Fully Parallelized LAMMPS Style)
    subroutine generate_hybrid(self, mol)
       use omp_lib ! Required for OpenMP runtime functions
+      use iso_fortran_env, only: int64
 
       !> Instance of the neighbourlist
       type(adjacency_list), intent(inout) :: self
@@ -162,10 +163,17 @@ contains
       integer :: n_xyz(3)
       real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3)
       real(wp) :: vol, dens
-      integer :: prob
+      integer(int64) :: prob
+      integer, allocatable :: cell_count(:)
+
+      ! Statistical estimation variables
+      integer :: nz_count, max_cell_val, cumulative_sum, median_val, mode_val, ci_buffer, i_cell
+      integer, allocatable :: hist(:)
+      real(wp) :: mean_val, max_metric
 
       ! OpenMP specific variables
-      integer :: nthreads, tid, max_neigh_per_thread, t, t_start, t_size
+      integer(int64) :: max_neigh_per_thread
+      integer :: nthreads, tid, t, t_start, t_size
       integer, allocatable :: thread_img(:)           ! Track current neighbor count per thread
       integer, allocatable :: thread_global_start(:)  ! Global offset for stitching phase
       integer, allocatable :: alloc_tid(:)            ! Track which thread processed which atom
@@ -183,12 +191,13 @@ contains
       n_xyz = max(1, floor((max_xyz - min_xyz) / (self%cutoff + eps)))
       cell_w = (max_xyz - min_xyz) / (real(n_xyz, wp) + eps) + eps
 
-      ! 2. Build the Linked List IN PARALLEL using Atomic Capture
+      ! 2. Build the Linked List using Atomic Capture
       allocate(head(product(n_xyz)), source=0)
+      allocate(cell_count(product(n_xyz)), source=0)
       allocate(nxt(mol%nat), source=0)
 
       !$omp parallel do private(iat, ix, iy, iz, ic) &
-      !$omp shared(mol, n_xyz, min_xyz, cell_w, head, nxt)
+      !$omp shared(mol, n_xyz, min_xyz, cell_w, head, nxt, cell_count)
       do iat = 1, mol%nat
          ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
          iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
@@ -200,12 +209,55 @@ contains
          nxt(iat) = head(ic)
          head(ic) = iat
          !$omp end atomic
+
+         !$omp atomic
+         cell_count(ic) = cell_count(ic) + 1
       end do
       !$omp end parallel do
 
-      vol = product(max_xyz - min_xyz) * real(count(head /= 0), wp) / real(product(n_xyz), wp)
-      dens = mol%nat / vol
-      prob = max(init_size, ceiling(dens * self%cutoff**3.0_wp * 4.0_wp))
+      ! --- Advanced Density Estimation via Non-Zero Cell Statistics ---
+      nz_count = count(cell_count > 0)
+
+      if (nz_count > 0) then
+         max_cell_val = maxval(cell_count)
+         allocate(hist(1:max_cell_val), source=0)
+
+         ! Build histogram of population frequencies for non-zero cells
+         do i_cell = 1, size(cell_count)
+            if (cell_count(i_cell) > 0) then
+               hist(cell_count(i_cell)) = hist(cell_count(i_cell)) + 1
+            end if
+         end do
+
+         ! A. Compute Mean
+         mean_val = real(sum(cell_count), wp) / real(nz_count, wp)
+
+         ! B. Compute Mode & inject the Confidence Interval padding
+         mode_val = maxloc(hist, dim=1)
+         ci_buffer = int(0.0001_wp * real(mol%nat, wp))
+         mode_val = mode_val + ci_buffer
+
+         ! C. Compute Median
+         cumulative_sum = 0
+         median_val = 1
+         do i_cell = 1, max_cell_val
+            cumulative_sum = cumulative_sum + hist(i_cell)
+            if (cumulative_sum >= (nz_count + 1) / 2) then
+               median_val = i_cell
+               exit
+            end if
+         end do
+
+         ! Select the maximum structural characteristic to protect against underallocation
+         max_metric = max(real(mode_val, wp), real(median_val, wp), real(mean_val, wp))
+         deallocate(hist)
+      else
+         max_metric = 1.0_wp
+      end if
+
+      vol = product(max_xyz - min_xyz) * real(nz_count, wp) / real(product(n_xyz), wp)
+      dens = max_metric * product(n_xyz) / vol
+      prob = max(int(init_size, int64), int(ceiling(dens * self%cutoff**3.0_wp * 4.0_wp), int64))
       write(*, *) " estimated neighbors: ", prob*mol%nat
 
       ! 3. Setup OpenMP Thread-Local Environments
@@ -221,7 +273,7 @@ contains
       allocate(alloc_tid(mol%nat), source=0)
 
       ! Estimate a safe thread-local allocation size with a safety buffer
-      max_neigh_per_thread = (prob * mol%nat) / nthreads + 50000
+      max_neigh_per_thread = int(real((prob * mol%nat), wp) / real(nthreads, wp), int64)
       allocate(thread_nlat(max_neigh_per_thread, nthreads))
       if (any(mol%periodic)) allocate(thread_nltr(max_neigh_per_thread, nthreads))
 
@@ -315,6 +367,7 @@ contains
                         thread_img(tid) = thread_img(tid) + 1
 
                         if (thread_img(tid) > max_neigh_per_thread) then
+                           write(*, *) "Thread ", tid, " exceeded max_neigh_per_thread: ", thread_img(tid), " > ", max_neigh_per_thread
                            error stop "Thread local neighbor buffer overflow! Increase safety margin."
                         end if
 
@@ -343,10 +396,10 @@ contains
       !$omp end parallel do
 
       ! Reallocate global storage targets to the exact final size
-
       call resize(self%nlat, img)
       write(*, *) "size of neighborlist: ", size(self%nlat)
       write(*, *) "estimation accuracy ", real(size(self%nlat), wp) / real(prob*mol%nat, wp)
+      write(*, *) "max neighbours per atom: ", maxval(self%nnl)
       if (any(mol%periodic)) call resize(self%nltr, img)
 
       ! Parallel stream-copy data from thread buffers into global structures
