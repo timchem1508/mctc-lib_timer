@@ -34,19 +34,20 @@
 !> and `nnl` for the number of entries map the atomic index to the row index.
 !>
 !> ```
-!> inl   =  0,       3,          7,      10,         14,      17, 20
-!> nnl   =  |  2 ->  |  3 ->     |  2 ->  |  3 ->     |  2 ->  |  |
+!> inl   =     1,       4,          8,      11,         15,      18,     21
+!> nnl   =     |  3 ->  |  4 ->     |  3 ->  |  4 ->     |  3 ->  | 3 -> |
 !> nlat  =     2, 4, 5, 1, 3, 5, 6, 2, 4, 6, 1, 3, 5, 6, 1, 2, 4, 2, 3, 4
 !> nltr  =     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
-!> nimg  =     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
-!> tridx =     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
 !> ```
-!>
-!> An alternative representation would be to store just the offsets in `inl` and
-!> additional beyond the last element the total number of neighbors. However,
-!> the indexing is from inl(i) to inl(i+1)-1 could be confusing, therefore
-!> two arrays are used for clarity. `nimg` saves the closest images of cross-
-!> interaction in the periodic system, `tridx` saves its translation index.
+!> The first element of the 'nlat' and 'nltr' arrays is the diagonal entry of
+!> the atom itself, which is always present. One can choose to store either
+!> the full matrix (complete mode) or only upper triangular. Note, that the
+!> sparsity pattern is symmetric, but one can use it to store assymmetric
+!> matrices with symmetric sparsity pattern. The indexing can be accessed
+!> either by `nlat(inl(i):inl(i)+nnl(i)-1)` or `nlat(inl(i):inl(i+1)-1)` to
+!> make it transferable for the CSR-support libraries (e.g. MKL, cuSPARSE, etc.).
+!> `nimg` saves the closest images of cross-interaction in the periodic system,
+!> `tridx` saves its translation index.
 
 module mctc_ncoord_adjlist_type
    use iso_fortran_env, only : int64
@@ -131,7 +132,7 @@ contains
          self%complete = complete_def
       end if
 
-      allocate(self%inl(mol%nat), source=0)
+      allocate(self%inl(mol%nat+1), source=0)
       allocate(self%nnl(mol%nat), source=0)
 
       if (any(mol%periodic)) then
@@ -180,7 +181,7 @@ contains
       integer, allocatable :: thread_nlat(:,:)        ! Thread-local neighbor storage [max_neigh, nthreads]
       integer, allocatable :: thread_nltr(:,:)        ! Thread-local translation storage [max_neigh, nthreads]
 
-      img = 0
+      img = 1
       cutoff2 = self%cutoff**2
 
       ! 1. Define the grid boundaries and dimensions (Serial Baseline)
@@ -215,47 +216,15 @@ contains
       end do
       !$omp end parallel do
 
-      ! --- Advanced Density Estimation via Non-Zero Cell Statistics ---
-      nz_count = count(cell_count > 0)
-
-      ! ==========================================
-      ! EXPORT CELL COUNT DATA TO FILE
-      ! ==========================================
-      open(unit=77, file='statistics.dat', status='replace', action='write')
-      do i_cell = 1, size(cell_count)
-         write(77, '(I0)') cell_count(i_cell)
-      end do
-      close(77)
-      ! ==========================================
-
-      ! Calculate median for non-zero cell counts
-      if (nz_count > 0) then
-         max_cell_val = maxval(cell_count)
-         allocate(hist(1:max_cell_val), source=0)
-
-         ! Build histogram of population frequencies for non-zero cells
-         do i_cell = 1, size(cell_count)
-            if (cell_count(i_cell) > 0) then
-               hist(cell_count(i_cell)) = hist(cell_count(i_cell)) + 1
-            end if
-         end do
-
-         cumulative_sum = 0
-         median_val = 1
-         do i_cell = 1, max_cell_val
-            cumulative_sum = cumulative_sum + hist(i_cell)
-            if (cumulative_sum >= (nz_count + 1) / 2) then
-               median_val = i_cell
-               exit
-            end if
-         end do
-
-         deallocate(hist)
-      end if
+      ! Calculate median linked-cell population for non-zero cell counts
+      call get_median(cell_count, median_val)
 
       vol = product(max_xyz - min_xyz) * real(nz_count, wp) / real(product(n_xyz), wp)
       dens = real(median_val, wp) * real(product(n_xyz), wp) / vol
       prob = max(int(init_size, int64), int(ceiling(dens * self%cutoff**3.0_wp * 4.0_wp), int64))
+
+      ! Adjust buffer estimation if complete matrix mode is enabled
+      if (self%complete) prob = prob * 2
       write(*, *) " estimated neighbors: ", prob*mol%nat
 
       ! 3. Setup OpenMP Thread-Local Environments
@@ -283,7 +252,15 @@ contains
          do iat = 1, mol%nat
             tid = omp_get_thread_num() + 1
             alloc_tid(iat) = tid
-            self%inl(iat) = thread_img(tid) ! Temporary store of local thread offset
+            self%inl(iat) = thread_img(tid)
+
+            ! --- 1. PRE-INSERT DIAGONAL ENTRY (j = iat) ---
+            thread_img(tid) = thread_img(tid) + 1
+            if (thread_img(tid) > max_neigh_per_thread) then
+               error stop "Thread local neighbor buffer overflow! Increase safety margin."
+            end if
+            thread_nlat(thread_img(tid), tid) = iat
+            thread_nltr(thread_img(tid), tid) = 1  ! Identity translation shift (0,0,0)
 
             ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
             iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
@@ -300,14 +277,17 @@ contains
                      jat = head(jc)
 
                      do while (jat > 0)
-                        if (jat > iat .or. self%complete) then
-                           jat = nxt(jat); cycle
+                        ! Filtering: Get upper triangular (jat >= iat) or complete matrix
+                        if (.not. self%complete .and. jat <= iat) then
+                           jat = nxt(jat)
+                           cycle
                         end if
 
                         do itr = 1, size(self%trans, 2)
                            vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
                            r2 = sum(vec**2)
 
+                           ! Cutoff check
                            if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
 
                            ! Thread-safe: local pointer updates
@@ -336,6 +316,14 @@ contains
             alloc_tid(iat) = tid
             self%inl(iat) = thread_img(tid)
 
+            ! Store diagonal elements on the first position of the 'nlat' array
+            thread_img(tid) = thread_img(tid) + 1
+            if (thread_img(tid) > max_neigh_per_thread) then
+               write(*, *) "Thread ", tid, " exceeded max_neigh_per_thread: ", thread_img(tid), " > ", max_neigh_per_thread
+               error stop "Thread local neighbor buffer overflow! Increase safety margin."
+            end if
+            thread_nlat(thread_img(tid), tid) = iat
+
             ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
             iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
             iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
@@ -351,15 +339,19 @@ contains
                      jat = head(jc)
 
                      do while (jat > 0)
-                        if (jat > iat .or. self%complete) then
-                           jat = nxt(jat); cycle
+
+                        ! Filtering: Get upper triangular (jat >= iat) or complete matrix
+                        if (.not. self%complete .and. jat <= iat) then
+                           jat = nxt(jat)
+                           cycle
                         end if
 
                         vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
                         r2 = sum(vec**2)
 
-                        if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) then
-                           jat = nxt(jat); cycle
+                        if (r2 > cutoff2) then
+                           jat = nxt(jat)
+                           cycle
                         end if
 
                         thread_img(tid) = thread_img(tid) + 1
@@ -393,11 +385,6 @@ contains
       end do
       !$omp end parallel do
 
-      ! Reallocate global storage targets to the exact final size
-      call resize(self%nlat, img)
-      write(*, *) "size of neighborlist: ", size(self%nlat)
-      write(*, *) "estimation accuracy ", real(size(self%nlat), wp) / real(prob*mol%nat, wp)
-      write(*, *) "max neighbours per atom: ", maxval(self%nnl)
       if (any(mol%periodic)) call resize(self%nltr, img)
 
       ! Parallel stream-copy data from thread buffers into global structures
@@ -512,43 +499,8 @@ contains
       end do
       !$omp end parallel do
 
-      ! --- Advanced Density Estimation via Non-Zero Cell Statistics ---
-      nz_count = count(cell_count > 0)
-
-      ! ==========================================
-      ! EXPORT CELL COUNT DATA TO FILE
-      ! ==========================================
-      open(unit=77, file='statistics.dat', status='replace', action='write')
-      do i_cell = 1, size(cell_count)
-         write(77, '(I0)') cell_count(i_cell)
-      end do
-      close(77)
-      ! ==========================================
-
-      ! Calculate median for non-zero cell counts
-      if (nz_count > 0) then
-         max_cell_val = maxval(cell_count)
-         allocate(hist(1:max_cell_val), source=0)
-
-         ! Build histogram of population frequencies for non-zero cells
-         do i_cell = 1, size(cell_count)
-            if (cell_count(i_cell) > 0) then
-               hist(cell_count(i_cell)) = hist(cell_count(i_cell)) + 1
-            end if
-         end do
-
-         cumulative_sum = 0
-         median_val = 1
-         do i_cell = 1, max_cell_val
-            cumulative_sum = cumulative_sum + hist(i_cell)
-            if (cumulative_sum >= (nz_count + 1) / 2) then
-               median_val = i_cell
-               exit
-            end if
-         end do
-
-         deallocate(hist)
-      end if
+      ! Calculate median linked-cell population for non-zero cell counts
+      call get_median(cell_count, median_val)
 
       ! 4. Setup OpenMP Thread-Local Environments
       !$omp parallel
@@ -854,5 +806,42 @@ contains
       end do
 
    end subroutine compute_grid
+
+   subroutine get_median(cells, median_val)
+      integer, intent(in) :: cells(:)
+      integer, intent(out) :: median_val
+
+      integer :: nz_count, max_cell_val, cumulative_sum
+      integer, allocatable :: hist(:)
+
+      nz_count = count(cells > 0)
+
+      if (nz_count > 0) then
+         max_cell_val = maxval(cells)
+         allocate(hist(1:max_cell_val), source=0)
+
+         ! Build histogram of population frequencies for non-zero cells
+         do i_cell = 1, size(cells)
+            if (cells(i_cell) > 0) then
+               hist(cells(i_cell)) = hist(cells(i_cell)) + 1
+            end if
+         end do
+
+         cumulative_sum = 0
+         median_val = 1
+         do i_cell = 1, max_cell_val
+            cumulative_sum = cumulative_sum + hist(i_cell)
+            if (cumulative_sum >= (nz_count + 1) / 2) then
+               median_val = i_cell
+               exit
+            end if
+         end do
+
+         deallocate(hist)
+      else
+         median_val = 0
+      end if
+
+   end subroutine get_median
 
 end module mctc_ncoord_adjlist_type
