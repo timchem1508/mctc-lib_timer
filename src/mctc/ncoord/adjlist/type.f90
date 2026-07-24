@@ -99,7 +99,7 @@ module mctc_ncoord_adjlist_type
    real(wp), parameter :: trans_def(3, 1) = 0.0_wp
    logical, parameter :: complete_def = .false.
    integer, parameter :: init_size = 10
-   real(wp), parameter :: buffer = 0.01_wp
+   real(wp), parameter :: buffer = 0.1_wp
    real(wp), parameter :: eps = tiny(1.0_wp)
    real(wp), parameter :: thr = sqrt(epsilon(0.0_wp))
    real(wp), parameter :: tol = 0.01_wp
@@ -260,7 +260,7 @@ contains
                error stop "Thread local neighbor buffer overflow! Increase safety margin."
             end if
             thread_nlat(thread_img(tid), tid) = iat
-            thread_nltr(thread_img(tid), tid) = 1  ! Identity translation shift (0,0,0)
+            thread_nltr(thread_img(tid), tid) = 1
 
             ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
             iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
@@ -432,22 +432,22 @@ contains
       real(wp) :: vec(3), zero_vec(3)
       real(wp) :: vol
       integer :: prob
-      integer :: ptr_tr, ptr_self_tr
+      integer :: ptr_tr, total_self_nimg
 
       ! OpenMP specific variables
-      integer :: nthreads, tid, t, t_start, t_size, t_tr_start, t_self_start
-      integer(int64) :: max_neigh_per_thread, max_tr_per_thread, max_self_per_thread
+      integer :: nthreads, tid, t, t_start, t_size, t_tr_start
+      integer(int64) :: max_neigh_per_thread, max_tr_per_thread
 
       ! Thread tracking arrays
-      integer, allocatable :: thread_img(:), thread_ptr_tr(:), thread_ptr_self_tr(:)
-      integer, allocatable :: thread_global_start(:), thread_global_tr_start(:), thread_global_self_start(:)
+      integer, allocatable :: thread_img(:), thread_ptr_tr(:)
+      integer, allocatable :: thread_global_start(:), thread_global_tr_start(:)
       integer, allocatable :: alloc_tid(:)
       integer, allocatable :: thread_nimg_max(:)
       logical, allocatable :: thread_checked(:,:)
 
       ! Thread-local storage buffers
       integer, allocatable :: thread_nlat(:,:), thread_nimg(:,:), thread_itr(:,:)
-      integer, allocatable :: thread_tridx(:,:), thread_selftridx(:,:)
+      integer, allocatable :: thread_tridx(:,:)
 
       ! Loop-private search variables for OMP
       integer :: nimg_count
@@ -455,7 +455,6 @@ contains
 
       zero_vec = 0.0_wp
       ptr_tr = 0
-      ptr_self_tr = 0
 
       ! 1. Lattice setup and jacket translations
       call get_lattice_points(mol%periodic, mol%lattice, sqrt(epsilon(0.0_wp)), trans)
@@ -466,6 +465,11 @@ contains
       cutoff2 = self%cutoff**2
       img = 0
       self%nimg_max = 0
+
+      ! Deallocate legacy separate self-interaction structures if they exist
+      if (allocated(self%sitr)) deallocate(self%sitr)
+      if (allocated(self%selfnimg)) deallocate(self%selfnimg)
+      if (allocated(self%selftridx)) deallocate(self%selftridx)
 
       ! 2. Grid Sizing calculation based on lattice geometry and cutoff
       call compute_grid(mol%lattice, self%cutoff, lat_inv, det, n_xyz)
@@ -491,7 +495,6 @@ contains
          !$omp atomic capture
          nxt(iat) = head(ic)
          head(ic) = iat
-
          !$omp end atomic
 
          !$omp atomic
@@ -509,27 +512,24 @@ contains
       !$omp end master
       !$omp end parallel
 
-      ! Estimate safe memory bounds based on density (with safety buffers)
+      ! Estimate safe memory bounds based on density
       vol = abs(det) * real(count(head /= 0), wp) / real(product(n_xyz), wp)
       dens = real(median_val, wp) * real(product(n_xyz), wp) / vol
       prob = max(init_size, ceiling(dens * self%cutoff**3.0_wp * 4.0_wp))
+
+      ! Double buffer estimate if complete matrix mode is enabled
+      if (self%complete) prob = prob * 2
       write(*, *) " estimated neighbors: ", prob*mol%nat
 
       max_neigh_per_thread = int(real((prob * mol%nat), wp) / real(nthreads, wp), int64)
       max_tr_per_thread = max_neigh_per_thread * 4 + 100
-      max_self_per_thread = ceiling(real(mol%nat, wp) * 12.0_wp / real(nthreads, wp), int64) + 100
-      write(*, *) " max_neigh_per_thread: ", max_neigh_per_thread
-      write(*, *) " max_tr_per_thread: ", max_tr_per_thread
-      write(*, *) " max_self_per_thread: ", max_self_per_thread
 
       ! Allocate thread metrics
       allocate(thread_img(nthreads), source=0)
       allocate(thread_ptr_tr(nthreads), source=0)
-      allocate(thread_ptr_self_tr(nthreads), source=0)
 
       allocate(thread_global_start(nthreads), source=0)
       allocate(thread_global_tr_start(nthreads), source=0)
-      allocate(thread_global_self_start(nthreads), source=0)
 
       allocate(alloc_tid(mol%nat), source=0)
       allocate(thread_nimg_max(nthreads), source=0)
@@ -540,46 +540,61 @@ contains
       allocate(thread_nimg(max_neigh_per_thread, nthreads))
       allocate(thread_itr(max_neigh_per_thread, nthreads))
       allocate(thread_tridx(max_tr_per_thread, nthreads))
-      allocate(thread_selftridx(max_self_per_thread, nthreads))
-
-      if (allocated(self%sitr)) deallocate(self%sitr)
-      if (allocated(self%selfnimg)) deallocate(self%selfnimg)
-      allocate(self%sitr(mol%nat), source=0)
-      allocate(self%selfnimg(mol%nat), source=0)
 
       ! 5. Threaded Loop Search
       !$omp parallel do schedule(guided) &
-      !$omp private(iat, tid, fract, ix, iy, iz, dk, dj, di, jx, jy, jz, jc, jat, vec, nimg_count, tridx_arr, r2_min) &
-      !$omp shared(mol, self, head, nxt, thread_img, thread_ptr_tr, thread_ptr_self_tr, thread_checked, &
-      !$omp        thread_nlat, thread_nimg, thread_itr, thread_tridx, thread_selftridx, thread_nimg_max, &
-      !$omp        trans, zero_vec, cutoff2, n_xyz, lat_inv, alloc_tid, max_neigh_per_thread, max_tr_per_thread, max_self_per_thread)
+      !$omp private(iat, tid, fract, ix, iy, iz, dk, dj, di, jx, jy, jz, jc, jat, vec, nimg_count, tridx_arr, r2_min, total_self_nimg) &
+      !$omp shared(mol, self, head, nxt, thread_img, thread_ptr_tr, thread_checked, &
+      !$omp        thread_nlat, thread_nimg, thread_itr, thread_tridx, thread_nimg_max, &
+      !$omp        trans, zero_vec, cutoff2, n_xyz, lat_inv, alloc_tid, max_neigh_per_thread, max_tr_per_thread)
       do iat = 1, mol%nat
          tid = omp_get_thread_num() + 1
          alloc_tid(iat) = tid
 
-         ! Store thread-local offsets for stitching later
+         ! Store thread-local offset for stitching
          self%inl(iat) = thread_img(tid)
-         self%sitr(iat) = thread_ptr_self_tr(tid)
 
-         ! --- Handle Self-Images ---
+         ! ------------------------------------------------------------------
+         ! A. PRE-INSERT DIAGONAL ENTRY (j = iat) WITH ALL SELF-TRANSLATIONS
+         ! ------------------------------------------------------------------
          call get_wsc_pairs(trans, zero_vec, nimg_count, tridx_arr, r2_min)
+
+         ! Total translations for j = iat: 1 (Identity R=0) + periodic self-images within cutoff
          if (nimg_count > 0 .and. r2_min <= cutoff2) then
-            self%selfnimg(iat) = nimg_count
-            thread_nimg_max(tid) = max(thread_nimg_max(tid), nimg_count)
-
-            if (thread_ptr_self_tr(tid) + nimg_count > max_self_per_thread) error stop "Self-tridx buffer overflow"
-
-            thread_selftridx(thread_ptr_self_tr(tid) + 1 : thread_ptr_self_tr(tid) + nimg_count, tid) = tridx_arr(1:nimg_count)
-            thread_ptr_self_tr(tid) = thread_ptr_self_tr(tid) + nimg_count
+            total_self_nimg = 1 + nimg_count
+         else
+            total_self_nimg = 1
          end if
 
-         ! --- Cross-Image Search ---
+         thread_img(tid) = thread_img(tid) + 1
+         if (thread_img(tid) > max_neigh_per_thread) error stop "Cross-image buffer overflow"
+         if (thread_ptr_tr(tid) + total_self_nimg > max_tr_per_thread) error stop "Tridx buffer overflow"
+
+         thread_nlat(thread_img(tid), tid) = iat
+         thread_nimg(thread_img(tid), tid) = total_self_nimg
+         thread_itr(thread_img(tid), tid) = thread_ptr_tr(tid)
+         thread_nimg_max(tid) = max(thread_nimg_max(tid), total_self_nimg)
+
+         ! First translation is Identity (index 1)
+         thread_tridx(thread_ptr_tr(tid) + 1, tid) = 1
+
+         ! Append remaining periodic self-images (R /= 0) if present
+         if (total_self_nimg > 1) then
+            thread_tridx(thread_ptr_tr(tid) + 2 : thread_ptr_tr(tid) + total_self_nimg, tid) = tridx_arr(1:nimg_count)
+         end if
+
+         thread_ptr_tr(tid) = thread_ptr_tr(tid) + total_self_nimg
+
+         ! ------------------------------------------------------------------
+         ! B. CROSS-ATOM NEIGHBOR SEARCH
+         ! ------------------------------------------------------------------
          fract(:) = matmul(lat_inv, mol%xyz(:, iat))
          fract(:) = fract(:) - floor(fract(:))
          ix = min(n_xyz(1), max(1, int(fract(1) * n_xyz(1)) + 1))
          iy = min(n_xyz(2), max(1, int(fract(2) * n_xyz(2)) + 1))
          iz = min(n_xyz(3), max(1, int(fract(3) * n_xyz(3)) + 1))
 
+         ! Mark iat as checked so j = iat is skipped in cell search loop
          thread_checked(iat, tid) = .true.
 
          do dk = -1, 1; do dj = -1, 1; do di = -1, 1
@@ -593,7 +608,8 @@ contains
                      if (.not. thread_checked(jat, tid)) then
                         thread_checked(jat, tid) = .true.
 
-                        if (jat <= iat .or. self%complete) then
+                        ! Upper Triangular (jat > iat) vs Complete Mode (all jat /= iat)
+                        if (self%complete .or. jat > iat) then
                            vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
                            call get_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
 
@@ -638,25 +654,21 @@ contains
       ! 6. The Stitching Phase (Prefix Sums)
       thread_global_start(1) = 0
       thread_global_tr_start(1) = 0
-      thread_global_self_start(1) = 0
 
       do t = 2, nthreads
          thread_global_start(t) = thread_global_start(t-1) + thread_img(t-1)
          thread_global_tr_start(t) = thread_global_tr_start(t-1) + thread_ptr_tr(t-1)
-         thread_global_self_start(t) = thread_global_self_start(t-1) + thread_ptr_self_tr(t-1)
       end do
 
       img = thread_global_start(nthreads) + thread_img(nthreads)
       ptr_tr = thread_global_tr_start(nthreads) + thread_ptr_tr(nthreads)
-      ptr_self_tr = thread_global_self_start(nthreads) + thread_ptr_self_tr(nthreads)
       self%nimg_max = maxval(thread_nimg_max)
 
       ! Shift atom internal offsets to match unified global arrays
-      !$omp parallel do private(iat, tid) shared(self, alloc_tid, thread_global_start, thread_global_self_start, mol)
+      !$omp parallel do private(iat, tid) shared(self, alloc_tid, thread_global_start, mol)
       do iat = 1, mol%nat
          tid = alloc_tid(iat)
          self%inl(iat) = self%inl(iat) + thread_global_start(tid)
-         self%sitr(iat) = self%sitr(iat) + thread_global_self_start(tid)
       end do
       !$omp end parallel do
 
@@ -665,30 +677,23 @@ contains
       call resize(self%nimg, img)
       call resize(self%itr, img)
       call resize(self%tridx, ptr_tr)
-      call resize(self%selftridx, ptr_self_tr)
 
-      !$omp parallel private(tid, t_start, t_size, t_tr_start, t_self_start) &
-      !$omp shared(self, thread_global_start, thread_global_tr_start, thread_global_self_start, thread_img, thread_ptr_tr, thread_ptr_self_tr, &
-      !$omp        thread_nlat, thread_nimg, thread_itr, thread_tridx, thread_selftridx)
+      !$omp parallel private(tid, t_start, t_size, t_tr_start) &
+      !$omp shared(self, thread_global_start, thread_global_tr_start, thread_img, thread_ptr_tr, &
+      !$omp        thread_nlat, thread_nimg, thread_itr, thread_tridx)
       tid = omp_get_thread_num() + 1
       t_start = thread_global_start(tid)
       t_size = thread_img(tid)
       t_tr_start = thread_global_tr_start(tid)
-      t_self_start = thread_global_self_start(tid)
 
       if (t_size > 0) then
          self%nlat(t_start + 1 : t_start + t_size) = thread_nlat(1 : t_size, tid)
          self%nimg(t_start + 1 : t_start + t_size) = thread_nimg(1 : t_size, tid)
-         ! Offset the translation indices by the thread's global starting translation point
          self%itr(t_start + 1 : t_start + t_size) = thread_itr(1 : t_size, tid) + t_tr_start
       end if
 
       if (thread_ptr_tr(tid) > 0) then
          self%tridx(t_tr_start + 1 : t_tr_start + thread_ptr_tr(tid)) = thread_tridx(1 : thread_ptr_tr(tid), tid)
-      end if
-
-      if (thread_ptr_self_tr(tid) > 0) then
-         self%selftridx(t_self_start + 1 : t_self_start + thread_ptr_self_tr(tid)) = thread_selftridx(1 : thread_ptr_self_tr(tid), tid)
       end if
       !$omp end parallel
 
@@ -698,10 +703,10 @@ contains
 
       ! 8. Cleanup Memory
       deallocate(head, nxt)
-      deallocate(thread_img, thread_ptr_tr, thread_ptr_self_tr)
-      deallocate(thread_global_start, thread_global_tr_start, thread_global_self_start)
+      deallocate(thread_img, thread_ptr_tr)
+      deallocate(thread_global_start, thread_global_tr_start)
       deallocate(alloc_tid, thread_nimg_max, thread_checked)
-      deallocate(thread_nlat, thread_nimg, thread_itr, thread_tridx, thread_selftridx)
+      deallocate(thread_nlat, thread_nimg, thread_itr, thread_tridx)
 
    end subroutine generate_wsc
 
