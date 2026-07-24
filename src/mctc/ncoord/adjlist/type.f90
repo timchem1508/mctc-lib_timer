@@ -386,6 +386,7 @@ contains
       !$omp end parallel do
 
       if (any(mol%periodic)) call resize(self%nltr, img)
+      allocate(self%nlat(img), source=0)
 
       ! Parallel stream-copy data from thread buffers into global structures
       !$omp parallel private(tid, t_start, t_size) shared(self, thread_global_start, thread_img, thread_nlat, thread_nltr, mol)
@@ -522,7 +523,7 @@ contains
       write(*, *) " estimated neighbors: ", prob*mol%nat
 
       max_neigh_per_thread = int(real((prob * mol%nat), wp) / real(nthreads, wp), int64)
-      max_tr_per_thread = max_neigh_per_thread * 4 + 100
+      max_tr_per_thread = max_neigh_per_thread * 6 + 100
 
       ! Allocate thread metrics
       allocate(thread_img(nthreads), source=0)
@@ -816,7 +817,7 @@ contains
       integer, intent(in) :: cells(:)
       integer, intent(out) :: median_val
 
-      integer :: nz_count, max_cell_val, cumulative_sum
+      integer :: nz_count, max_cell_val, cumulative_sum, i_cell
       integer, allocatable :: hist(:)
 
       nz_count = count(cells > 0)
