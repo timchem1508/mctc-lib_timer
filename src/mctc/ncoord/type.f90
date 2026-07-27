@@ -277,7 +277,7 @@ contains
       !$omp do schedule(runtime)
       do iat = 1, mol%nat
          izp = mol%id(iat)
-         do kat = list%inl(iat) + 1, list%inl(iat) + list%nnl(iat)
+         do kat = list%inl(iat) + 1, list%inl(iat + 1) - 1
             jat = list%nlat(kat)
             jzp = mol%id(jat)
             den = self%get_en_factor(izp, jzp)
@@ -439,7 +439,7 @@ contains
       !$omp do schedule(runtime)
       do iat = 1, mol%nat
          izp = mol%id(iat)
-         do kat = list%inl(iat) + 1, list%inl(iat) + list%nnl(iat)
+         do kat = list%inl(iat) + 1, list%inl(iat + 1) - 1
             jat = list%nlat(kat)
             jzp = mol%id(jat)
             den = self%get_en_factor(izp, jzp)
@@ -636,7 +636,7 @@ contains
          idamp = 1.0_wp
          if (self%cut > 0.0_wp) idamp = dlog_cn_cut(cn(iat), self%cut)
 
-         do kat = list%inl(iat) + 1, list%inl(iat) + list%nnl(iat)
+         do kat = list%inl(iat) + 1, list%inl(iat + 1) - 1
             jat = list%nlat(kat)
             jzp = mol%id(jat)
             den = self%get_en_factor(izp, jzp)
