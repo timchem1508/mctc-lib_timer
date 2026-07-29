@@ -456,7 +456,7 @@ contains
       logical, allocatable :: thread_checked(:,:)
 
       ! Thread-local storage buffers
-      integer, allocatable :: thread_nlat(:,:), thread_itr(:,:)
+      integer, allocatable :: thread_nlat(:,:), thread_nimg(:,:), thread_itr(:,:)
       integer, allocatable :: thread_tridx(:,:)
 
       ! Loop-private search variables for OMP
@@ -475,6 +475,12 @@ contains
       cutoff2 = self%cutoff**2
       img = 0
       self%nimg_max = 0
+
+      ! Deallocate legacy structures if present
+      if (allocated(self%nimg)) deallocate(self%nimg)
+      if (allocated(self%sitr)) deallocate(self%sitr)
+      if (allocated(self%selfnimg)) deallocate(self%selfnimg)
+      if (allocated(self%selftridx)) deallocate(self%selftridx)
 
       ! 2. Grid Sizing calculation based on lattice geometry and cutoff
       call compute_grid(mol%lattice, self%cutoff, lat_inv, det, n_xyz)
@@ -542,6 +548,7 @@ contains
 
       ! Allocate Thread-local buffers
       allocate(thread_nlat(max_neigh_per_thread, nthreads))
+      allocate(thread_nimg(max_neigh_per_thread, nthreads))
       allocate(thread_itr(max_neigh_per_thread, nthreads))
       allocate(thread_tridx(max_tr_per_thread, nthreads))
 
@@ -553,7 +560,7 @@ contains
       !$omp parallel do schedule(static) &
       !$omp private(iat, tid, start_count, fract, ix, iy, iz, dk, dj, di, jx, jy, jz, jc, jat, vec, nimg_count, tridx_arr, r2_min, total_self_nimg) &
       !$omp shared(mol, self, head, nxt, thread_img, thread_ptr_tr, thread_checked, &
-      !$omp        thread_nlat, thread_itr, thread_tridx, thread_nimg_max, &
+      !$omp        thread_nlat, thread_nimg, thread_itr, thread_tridx, thread_nimg_max, &
       !$omp        trans, zero_vec, cutoff2, n_xyz, lat_inv, max_neigh_per_thread, max_tr_per_thread)
       do iat = 1, mol%nat
          tid = omp_get_thread_num() + 1
@@ -576,6 +583,7 @@ contains
          if (thread_ptr_tr(tid) + total_self_nimg > max_tr_per_thread) error stop "Tridx buffer overflow"
 
          thread_nlat(thread_img(tid), tid) = iat
+         thread_nimg(thread_img(tid), tid) = total_self_nimg
          ! Store 1-based local index into translation array
          thread_itr(thread_img(tid), tid) = thread_ptr_tr(tid) + 1
          thread_nimg_max(tid) = max(thread_nimg_max(tid), total_self_nimg)
@@ -606,6 +614,7 @@ contains
                   jx = modulo(ix + di - 1, n_xyz(1)) + 1
                   jy = modulo(iy + dj - 1, n_xyz(2)) + 1
                   jz = modulo(iz + dk - 1, n_xyz(3)) + 1
+                  jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*(jy-1) ! Wait, keep original grid index computation
                   jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
                   jat = head(jc)
 
@@ -625,6 +634,7 @@ contains
                               if (thread_ptr_tr(tid) + nimg_count > max_tr_per_thread) error stop "Tridx buffer overflow"
 
                               thread_nlat(thread_img(tid), tid) = jat
+                              thread_nimg(thread_img(tid), tid) = nimg_count
                               ! Store 1-based local index into translation array
                               thread_itr(thread_img(tid), tid) = thread_ptr_tr(tid) + 1
                               thread_nimg_max(tid) = max(thread_nimg_max(tid), nimg_count)
@@ -680,12 +690,13 @@ contains
 
       ! 7. Target Array Resizing & Stream Copying
       call resize(self%nlat, img)
+      call resize(self%nimg, img)
       call resize(self%itr, img + 1) ! Standard CSR row pointer format (size = nnz + 1)
       call resize(self%tridx, ptr_tr)
 
       !$omp parallel private(tid, t_start, t_size, t_tr_start) &
       !$omp shared(self, thread_global_start, thread_global_tr_start, thread_img, thread_ptr_tr, &
-      !$omp        thread_nlat, thread_itr, thread_tridx)
+      !$omp        thread_nlat, thread_nimg, thread_itr, thread_tridx)
       tid = omp_get_thread_num() + 1
       t_start = thread_global_start(tid)
       t_size = thread_img(tid)
@@ -693,6 +704,7 @@ contains
 
       if (t_size > 0) then
          self%nlat(t_start + 1 : t_start + t_size) = thread_nlat(1 : t_size, tid)
+         self%nimg(t_start + 1 : t_start + t_size) = thread_nimg(1 : t_size, tid)
          ! Offset local 1-based translation pointer by global thread translation start
          self%itr(t_start + 1 : t_start + t_size) = thread_itr(1 : t_size, tid) + t_tr_start
       end if
@@ -714,7 +726,7 @@ contains
       deallocate(thread_img, thread_ptr_tr)
       deallocate(thread_global_start, thread_global_tr_start)
       deallocate(thread_nimg_max, thread_checked)
-      deallocate(thread_nlat, thread_itr, thread_tridx)
+      deallocate(thread_nlat, thread_nimg, thread_itr, thread_tridx)
 
    end subroutine generate_wsc
 
