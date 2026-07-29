@@ -35,7 +35,6 @@
 !>
 !> ```
 !> inl   =     1,       4,          8,      11,         15,      18,     21
-!> nnl   =     |  3 ->  |  4 ->     |  3 ->  |  4 ->     |  3 ->  | 3 -> |
 !> nlat  =     2, 4, 5, 1, 3, 5, 6, 2, 4, 6, 1, 3, 5, 6, 1, 2, 4, 2, 3, 4
 !> nltr  =     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
 !> ```
@@ -80,18 +79,12 @@ module mctc_ncoord_adjlist_type
       !> Wiegner-Seitz cell parameters
       !> Maximal number of interaction images
       integer :: nimg_max
-      !> Pointer index of the Wiegner-Seitz translation vector for self-interaction
-      integer, allocatable :: sitr(:)
       !> Pointer index of the Wiegner-Seitz translation vector for each neighbour
       integer, allocatable :: itr(:)
       !> Number of images per cross-interaction
       integer, allocatable :: nimg(:)
-      !> Number of images per self-interaction
-      integer, allocatable :: selfnimg(:)
       !> Primitive unit cell image index per cross-interaction
       integer, allocatable :: tridx(:)
-      !> Primitive unit cell image index per self-interaction
-      integer, allocatable :: selftridx(:)
    end type adjacency_list
 
    ! Default input
@@ -133,7 +126,6 @@ contains
       end if
 
       allocate(self%inl(mol%nat+1), source=0)
-      allocate(self%nnl(mol%nat), source=0)
 
       if (any(mol%periodic)) then
          call generate_wsc(self, mol)
@@ -476,12 +468,6 @@ contains
       img = 0
       self%nimg_max = 0
 
-      ! Deallocate legacy structures if present
-      if (allocated(self%nimg)) deallocate(self%nimg)
-      if (allocated(self%sitr)) deallocate(self%sitr)
-      if (allocated(self%selfnimg)) deallocate(self%selfnimg)
-      if (allocated(self%selftridx)) deallocate(self%selftridx)
-
       ! 2. Grid Sizing calculation based on lattice geometry and cutoff
       call compute_grid(mol%lattice, self%cutoff, lat_inv, det, n_xyz)
 
@@ -552,9 +538,9 @@ contains
       allocate(thread_itr(max_neigh_per_thread, nthreads))
       allocate(thread_tridx(max_tr_per_thread, nthreads))
 
-      ! Allocate row non-zero count array
-      if (allocated(self%nnl)) deallocate(self%nnl)
-      allocate(self%nnl(mol%nat), source=0)
+      ! Pre-allocate CSR row pointer array (size = nat + 1)
+      if (allocated(self%inl)) deallocate(self%inl)
+      allocate(self%inl(mol%nat + 1), source=0)
 
       ! 5. Threaded Loop Search (Static scheduling preserves row ordering)
       !$omp parallel do schedule(static) &
@@ -614,7 +600,6 @@ contains
                   jx = modulo(ix + di - 1, n_xyz(1)) + 1
                   jy = modulo(iy + dj - 1, n_xyz(2)) + 1
                   jz = modulo(iz + dk - 1, n_xyz(3)) + 1
-                  jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*(jy-1) ! Wait, keep original grid index computation
                   jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
                   jat = head(jc)
 
@@ -662,7 +647,8 @@ contains
                   end do
                end do; end do; end do
 
-         self%nnl(iat) = thread_img(tid) - start_count
+         ! Temporarily store neighbor count for atom iat at position (iat + 1)
+         self%inl(iat + 1) = thread_img(tid) - start_count
       end do
       !$omp end parallel do
 
@@ -679,13 +665,10 @@ contains
       ptr_tr = thread_global_tr_start(nthreads) + thread_ptr_tr(nthreads)
       self%nimg_max = maxval(thread_nimg_max)
 
-      ! Construct Standard 1-based CSR Row Pointer Array (size = nat + 1)
-      if (allocated(self%inl)) deallocate(self%inl)
-      allocate(self%inl(mol%nat + 1))
-
+      ! Construct standard 1-based CSR Row Pointer Array in-place via prefix sum
       self%inl(1) = 1
       do iat = 1, mol%nat
-         self%inl(iat + 1) = self%inl(iat) + self%nnl(iat)
+         self%inl(iat + 1) = self%inl(iat) + self%inl(iat + 1)
       end do
 
       ! 7. Target Array Resizing & Stream Copying
@@ -716,10 +699,6 @@ contains
 
       ! Final CSR boundary element
       self%itr(img + 1) = ptr_tr + 1
-
-      write(*, *) "size of neighborlist: ", size(self%nlat)
-      write(*, *) "estimation accuracy ", real(size(self%nlat), wp) / real(prob*mol%nat, wp)
-      write(*, *) "max neighbours per atom: ", maxval(self%nnl)
 
       ! 8. Cleanup Memory
       deallocate(head, nxt, cell_count)
