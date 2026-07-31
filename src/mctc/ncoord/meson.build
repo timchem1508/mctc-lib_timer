@@ -13,7 +13,6 @@
 # limitations under the License.
 
 subdir('erf')
-subdir('adjlist')
 
 srcs += files(
   'dexp.f90',

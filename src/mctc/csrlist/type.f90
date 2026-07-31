@@ -13,8 +13,8 @@
 ! See the License for the specific language governing permissions and
 ! limitations under the License.
 
-!> @file mctc/ncoord/adjlist/type.f90
-!> Sparse neighbour map / adjacency list implementation.
+!> @file mctc/csrlist/type.f90
+!> Compressed Sparse Row neighbour list implementation.
 
 !> Implementation of a sparse neighbour map in compressed sparse row format.
 !>
@@ -43,12 +43,12 @@
 !> the full matrix (complete mode) or only upper triangular. Note, that the
 !> sparsity pattern is symmetric, but one can use it to store assymmetric
 !> matrices with symmetric sparsity pattern. The indexing can be accessed
-!> either by `nlat(inl(i):inl(i)+nnl(i)-1)` or `nlat(inl(i):inl(i+1)-1)` to
-!> make it transferable for the CSR-support libraries (e.g. MKL, cuSPARSE, etc.).
+!> `nlat(inl(i):inl(i+1)-1)` to make it transferable for the CSR-support
+!> libraries (e.g. MKL, cuSPARSE, etc.).
 !> `nimg` saves the closest images of cross-interaction in the periodic system,
 !> `tridx` saves its translation index.
 
-module mctc_ncoord_adjlist_type
+module mctc_csrlist_type
    use iso_fortran_env, only : int64
    use mctc_env, only : wp, timer_type, format_time
    use mctc_io, only : structure_type
@@ -57,11 +57,11 @@ module mctc_ncoord_adjlist_type
    implicit none
    private
 
-   public :: adjacency_list, new_adjacency_list
+   public :: csr_list, new_csr_list
 
-   !> @class adjacency_list
+   !> @class csr_list
    !> Neighbourlist in CSR format
-   type :: adjacency_list
+   type :: csr_list
       !> Realspace cutoff for neighbourlist generation
       real(wp), allocatable :: cutoff
       !> Complete asymmetric neighbour list flag
@@ -85,7 +85,7 @@ module mctc_ncoord_adjlist_type
       integer, allocatable :: nimg(:)
       !> Primitive unit cell image index per cross-interaction
       integer, allocatable :: tridx(:)
-   end type adjacency_list
+   end type csr_list
 
    ! Default input
    real(wp), parameter :: cutoff_def = 29.0_wp
@@ -100,9 +100,9 @@ module mctc_ncoord_adjlist_type
 contains
 
    !> Create new neighbourlist for a given geometry and cutoff
-   subroutine new_adjacency_list(self, mol, cutoff, trans, complete)
+   subroutine new_csr_list(self, mol, cutoff, trans, complete)
       !> Instance of the neighbourlist
-      type(adjacency_list), intent(out) :: self
+      type(csr_list), intent(out) :: self
       !> Structure type
       type(structure_type), intent(in) :: mol
       !> Realspace cutoff for neighbourlist generation
@@ -138,7 +138,7 @@ contains
          call generate_hybrid(self, mol)
       end if
 
-   end subroutine new_adjacency_list
+   end subroutine new_csr_list
 
 !> Generator of the CSR-based Hybrid Neighbour List
    subroutine generate_hybrid(self, mol)
@@ -146,7 +146,7 @@ contains
       use iso_fortran_env, only: int64
 
       !> Instance of the neighbourlist
-      type(adjacency_list), intent(inout) :: self
+      type(csr_list), intent(inout) :: self
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
 
@@ -419,7 +419,7 @@ contains
       use iso_fortran_env, only: int64
 
       !> Instance of the neighbourlist
-      type(adjacency_list), intent(inout) :: self
+      type(csr_list), intent(inout) :: self
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
 
@@ -848,4 +848,4 @@ contains
 
    end subroutine get_median
 
-end module mctc_ncoord_adjlist_type
+end module mctc_csrlist_type
