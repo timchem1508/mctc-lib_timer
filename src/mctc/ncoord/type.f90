@@ -17,7 +17,7 @@ module mctc_ncoord_type
    use mctc_env, only : wp
    use mctc_io, only : structure_type
    use mctc_cutoff, only : get_lattice_points
-   use mctc_ncoord_adjlist_type, only : adjacency_list
+   use mctc_csrlist, only : csr_list
 
    implicit none
    private
@@ -98,7 +98,7 @@ contains
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
       !> Adjacency list for neighbourlist-based CN evaluation
-      type(adjacency_list), intent(in), optional :: list
+      type(csr_list), intent(in), optional :: list
       !> Error function coordination number.
       real(wp), intent(out) :: cn(:)
       !> Derivative of the CN with respect to the Cartesian coordinates.
@@ -135,7 +135,7 @@ contains
       real(wp), intent(out), optional :: dcndL(:, :, :)
 
       !> Adjacency list for neighbourlist-based CN evaluation
-      type(adjacency_list), intent(in), optional :: list
+      type(csr_list), intent(in), optional :: list
 
       !> Derivative of the CN with respect to the Cartesian coordinates.
       real(wp), intent(out), optional :: dcndrij(:, :), dcndrji(:, :), dcndrdiag(:, :)
@@ -230,7 +230,7 @@ contains
       !> Error function coordination number.
       real(wp), intent(out) :: cn(:)
       !> Adjacency list for neighbourlist-based CN evaluation
-      type(adjacency_list), intent(in) :: list
+      type(csr_list), intent(in) :: list
 
       integer :: iat, jat, kat, izp, jzp, itr
       real(wp) :: r2, r1, rij(3), countf, cutoff2, den
@@ -382,7 +382,7 @@ contains
       !> Derivative of the CN with respect to strain deformations.
       real(wp), intent(out) :: dcndL(:, :, :)
       !> Adjacency list for neighbourlist-based CN evaluation
-      type(adjacency_list), intent(in) :: list
+      type(csr_list), intent(in) :: list
 
       integer :: iat, jat, kat, izp, jzp, itr
       real(wp) :: r2, r1, rij(3), countf, countd(3), sigma(3, 3), cutoff2, den
@@ -576,7 +576,7 @@ contains
       real(wp), intent(inout) :: sigma(:, :)
 
       !> Adjacency list for neighbourlist-based CN evaluation
-      type(adjacency_list), intent(in) :: list
+      type(csr_list), intent(in) :: list
 
       integer :: iat, jat, kat, izp, jzp, itr
       real(wp) :: r2, r1, rij(3), countd(3), ds(3, 3), cutoff2, den
