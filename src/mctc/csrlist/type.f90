@@ -543,7 +543,8 @@ contains
 
       ! 5. Threaded Loop Search (Static scheduling preserves row ordering)
       !$omp parallel do schedule(static) &
-      !$omp private(iat, tid, start_count, fract, ix, iy, iz, dk, dj, di, jx, jy, jz, jc, jat, vec, nimg_count, tridx_arr, r2_min, total_self_nimg) &
+      !$omp private(iat, tid, start_count, fract, ix, iy, iz, dk, dj, &
+      !$omp        di, jx, jy, jz, jc, jat, vec, nimg_count, tridx_arr, r2_min, total_self_nimg) &
       !$omp shared(mol, self, head, nxt, thread_img, thread_ptr_tr, thread_checked, &
       !$omp        thread_nlat, thread_nimg, thread_itr, thread_tridx, thread_nimg_max, &
       !$omp        trans, zero_vec, cutoff2, n_xyz, lat_inv, max_neigh_per_thread, max_tr_per_thread)
