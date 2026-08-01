@@ -356,7 +356,6 @@ contains
                         thread_img(tid) = thread_img(tid) + 1
 
                         if (thread_img(tid) > max_neigh_per_thread) then
-                           write(*, *) "Thread ", tid, " exceeded max_neigh_per_thread: ", thread_img(tid), " > ", max_neigh_per_thread
                            error stop "Thread local neighbor buffer overflow! Increase safety margin."
                         end if
 
@@ -674,7 +673,7 @@ contains
       ! 7. Target Array Resizing & Stream Copying
       call resize(self%nlat, img)
       call resize(self%nimg, img)
-      call resize(self%itr, img + 1) ! Standard CSR row pointer format (size = nnz + 1)
+      call resize(self%itr, img + 1)
       call resize(self%tridx, ptr_tr)
 
       !$omp parallel private(tid, t_start, t_size, t_tr_start) &
