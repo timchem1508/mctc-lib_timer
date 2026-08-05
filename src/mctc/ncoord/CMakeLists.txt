@@ -13,7 +13,6 @@
 # limitations under the License.
 
 add_subdirectory("erf")
-add_subdirectory("adjlist")
 
 set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
 
