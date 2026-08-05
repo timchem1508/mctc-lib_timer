@@ -46,6 +46,7 @@ tests = [
   'write-vasp',
   'write-xyz',
   'timer',
+  'csrlist',
 ]
 
 test_srcs = files(

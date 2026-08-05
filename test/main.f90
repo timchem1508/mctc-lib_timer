@@ -17,7 +17,7 @@ program tester
    use, intrinsic :: iso_fortran_env, only : error_unit
    use mctc_env_system, only : get_argument
    use mctc_env_testing, only : run_testsuite, new_testsuite, testsuite_type, &
-      & select_suite, run_selected
+   & select_suite, run_selected
    use test_cutoff, only : collect_cutoff
    use test_data, only : collect_data
    use test_math, only : collect_math
@@ -51,6 +51,7 @@ program tester
    use test_write_turbomole, only : collect_write_turbomole
    use test_write_vasp, only : collect_write_vasp
    use test_write_xyz, only : collect_write_xyz
+   use test_csrlist, only : collect_csrlist
    implicit none
    integer :: stat, is
    character(len=:), allocatable :: suite_name, test_name
@@ -60,40 +61,41 @@ program tester
    stat = 0
 
    testsuites = [ &
-      & new_testsuite("cutoff", collect_cutoff), &
-      & new_testsuite("data", collect_data), &
-      & new_testsuite("math", collect_math), &
-      & new_testsuite("ncoord", collect_ncoord), &
-      & new_testsuite("timer", collect_timer), &
-      & new_testsuite("symbols", collect_symbols), &
-      & new_testsuite("read", collect_read), &
-      & new_testsuite("read-aims", collect_read_aims), &
-      & new_testsuite("read-cjson", collect_read_cjson), &
-      & new_testsuite("read-ctfile", collect_read_ctfile), &
-      & new_testsuite("read-gaussian", collect_read_gaussian), &
-      & new_testsuite("read-genformat", collect_read_genformat), &
-      & new_testsuite("read-json", collect_read_json), &
-      & new_testsuite("read-pdb", collect_read_pdb), &
-      & new_testsuite("read-pymatgen", collect_read_pymatgen), &
-      & new_testsuite("read-qchem", collect_read_qchem), &
-      & new_testsuite("read-qcschema", collect_read_qcschema), &
-      & new_testsuite("read-turbomole", collect_read_turbomole), &
-      & new_testsuite("read-vasp", collect_read_vasp), &
-      & new_testsuite("read-xyz", collect_read_xyz), &
-      & new_testsuite("write", collect_write), &
-      & new_testsuite("write-aims", collect_write_aims), &
-      & new_testsuite("write-cjson", collect_write_cjson), &
-      & new_testsuite("write-ctfile", collect_write_ctfile), &
-      & new_testsuite("write-gaussian", collect_write_gaussian), &
-      & new_testsuite("write-genformat", collect_write_genformat), &
-      & new_testsuite("write-pdb", collect_write_pdb), &
-      & new_testsuite("write-pymatgen", collect_write_pymatgen), &
-      & new_testsuite("write-qchem", collect_write_qchem), &
-      & new_testsuite("write-qcschema", collect_write_qcschema), &
-      & new_testsuite("write-turbomole", collect_write_turbomole), &
-      & new_testsuite("write-vasp", collect_write_vasp), &
-      & new_testsuite("write-xyz", collect_write_xyz) &
-      & ]
+   & new_testsuite("cutoff", collect_cutoff), &
+   & new_testsuite("data", collect_data), &
+   & new_testsuite("math", collect_math), &
+   & new_testsuite("ncoord", collect_ncoord), &
+   & new_testsuite("timer", collect_timer), &
+   & new_testsuite("symbols", collect_symbols), &
+   & new_testsuite("read", collect_read), &
+   & new_testsuite("read-aims", collect_read_aims), &
+   & new_testsuite("read-cjson", collect_read_cjson), &
+   & new_testsuite("read-ctfile", collect_read_ctfile), &
+   & new_testsuite("read-gaussian", collect_read_gaussian), &
+   & new_testsuite("read-genformat", collect_read_genformat), &
+   & new_testsuite("read-json", collect_read_json), &
+   & new_testsuite("read-pdb", collect_read_pdb), &
+   & new_testsuite("read-pymatgen", collect_read_pymatgen), &
+   & new_testsuite("read-qchem", collect_read_qchem), &
+   & new_testsuite("read-qcschema", collect_read_qcschema), &
+   & new_testsuite("read-turbomole", collect_read_turbomole), &
+   & new_testsuite("read-vasp", collect_read_vasp), &
+   & new_testsuite("read-xyz", collect_read_xyz), &
+   & new_testsuite("write", collect_write), &
+   & new_testsuite("write-aims", collect_write_aims), &
+   & new_testsuite("write-cjson", collect_write_cjson), &
+   & new_testsuite("write-ctfile", collect_write_ctfile), &
+   & new_testsuite("write-gaussian", collect_write_gaussian), &
+   & new_testsuite("write-genformat", collect_write_genformat), &
+   & new_testsuite("write-pdb", collect_write_pdb), &
+   & new_testsuite("write-pymatgen", collect_write_pymatgen), &
+   & new_testsuite("write-qchem", collect_write_qchem), &
+   & new_testsuite("write-qcschema", collect_write_qcschema), &
+   & new_testsuite("write-turbomole", collect_write_turbomole), &
+   & new_testsuite("write-vasp", collect_write_vasp), &
+   & new_testsuite("write-xyz", collect_write_xyz), &
+   & new_testsuite("csrlist", collect_csrlist) &
+   & ]
 
    call get_argument(1, suite_name)
    call get_argument(2, test_name)

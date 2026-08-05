@@ -57,7 +57,7 @@ module mctc_csrlist_type
    implicit none
    private
 
-   public :: csr_list, new_csr_list
+   public :: csr_list, new_csr_list, compute_grid, get_linked_cell
 
    !> @class csr_list
    !> Neighbourlist in CSR format
@@ -155,7 +155,7 @@ contains
       integer, allocatable :: head(:), nxt(:)
       integer :: n_xyz(3)
       real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3)
-      real(wp) :: vol, dens
+      real(wp) :: vol, dens, det, lat_inv(3, 3), fract(3)
       integer(int64) :: prob
       integer, allocatable :: cell_count(:)
 
@@ -181,44 +181,30 @@ contains
       img = 0
       cutoff2 = self%cutoff**2
 
-      ! 1. Define the grid boundaries and dimensions
-      min_xyz = minval(mol%xyz, dim=2) - buffer
-      max_xyz = maxval(mol%xyz, dim=2) + buffer
-
-      ! Number of cells: must be at least 1, and cell width >= cutoff
-      n_xyz = max(1, floor((max_xyz - min_xyz) / (self%cutoff + eps)))
-      cell_w = (max_xyz - min_xyz) / (real(n_xyz, wp) + eps) + eps
+      ! 1. Generate linked-cell grid for neighbour search
+      if (any(mol%periodic)) then
+         call compute_grid(mol=mol, cutoff=self%cutoff, det=det, n_xyz=n_xyz, lat_inv=lat_inv)
+      else
+         call compute_grid(mol=mol, cutoff=self%cutoff, det=det, n_xyz=n_xyz, cell_w=cell_w)
+      end if
 
       ! 2. Build the Linked List using Atomic Capture
       allocate(head(product(n_xyz)), source=0)
       allocate(cell_count(product(n_xyz)), source=0)
       allocate(nxt(mol%nat), source=0)
 
-      !$omp parallel do private(iat, ix, iy, iz, ic) &
-      !$omp shared(mol, n_xyz, min_xyz, cell_w, head, nxt, cell_count)
-      do iat = 1, mol%nat
-         ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
-         iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
-         iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
-
-         ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
-
-         !$omp atomic capture
-         nxt(iat) = head(ic)
-         head(ic) = iat
-         !$omp end atomic
-
-         !$omp atomic
-         cell_count(ic) = cell_count(ic) + 1
-      end do
-      !$omp end parallel do
+      if (any(mol%periodic)) then
+         call get_linked_cell(mol, n_xyz, head, nxt, cell_count, lat_inv=lat_inv)
+      else
+         call get_linked_cell(mol, n_xyz, head, nxt, cell_count, cell_w=cell_w)
+      end if
 
       ! Linked-cell statistics: median and non-zero cell count
       nz_count = count(cell_count > 0)
       call get_median(cell_count, median_val)
 
       ! Estimate the number of neighbors based on median cell population and volume
-      vol = product(max_xyz - min_xyz) * real(nz_count, wp) / real(product(n_xyz), wp)
+      vol = det * real(nz_count, wp) / real(product(n_xyz), wp)
       dens = real(median_val, wp) * real(product(n_xyz), wp) / vol
       prob = max(int(init_size, int64), int(ceiling(dens * self%cutoff**3.0_wp * 4.0_wp), int64))
       ! Double buffer estimate if complete matrix mode is enabled
@@ -264,9 +250,11 @@ contains
             thread_nltr(thread_img(tid), tid) = 1
 
             ! Off-diagonal neighbor search within the cutoff radius
-            ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
-            iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
-            iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
+            fract(:) = matmul(lat_inv, mol%xyz(:, iat))
+            fract(:) = fract(:) - floor(fract(:))
+            ix = min(n_xyz(1), max(1, int(fract(1) * n_xyz(1)) + 1))
+            iy = min(n_xyz(2), max(1, int(fract(2) * n_xyz(2)) + 1))
+            iz = min(n_xyz(3), max(1, int(fract(3) * n_xyz(3)) + 1))
 
             do dk = -1, 1; do dj = -1, 1; do di = -1, 1
                      jx = ix + di; jy = iy + dj; jz = iz + dk
@@ -308,6 +296,8 @@ contains
 
       else
          ! Non-periodic branch
+         min_xyz = minval(mol%xyz, dim=2) - buffer
+
          !$omp parallel do schedule(guided) &
          !$omp private(iat, tid, ix, iy, iz, dk, dj, di) &
          !$omp private(jx, jy, jz, jc, jat, vec, r2) &
@@ -429,7 +419,7 @@ contains
       integer :: n_xyz(3), ntr, median_val, nz_count
       real(wp) :: cutoff2, r2_min, dens
       real(wp) :: lat_inv(3, 3), det
-      real(wp) :: fract(3), xyz_wrap(3, mol%nat)
+      real(wp) :: fract(3)
       real(wp), allocatable :: trans(:, :)
       real(wp) :: vec(3), zero_vec(3)
       real(wp) :: vol
@@ -468,35 +458,14 @@ contains
       self%nimg_max = 0
 
       ! 2. Grid Sizing calculation based on lattice geometry and cutoff
-      call compute_grid(mol%lattice, self%cutoff, lat_inv, det, n_xyz)
+      call compute_grid(mol=mol, cutoff=self%cutoff, det=det, n_xyz=n_xyz, lat_inv=lat_inv)
 
       ! 3. Build Linked Cell List using Atomic Capture
       allocate(head(product(n_xyz)), source=0)
       allocate(nxt(mol%nat), source=0)
       allocate(cell_count(product(n_xyz)), source=0)
 
-      !$omp parallel do private(iat, fract, ix, iy, iz, ic) &
-      !$omp shared(mol, lat_inv, n_xyz, head, nxt, xyz_wrap, cell_count)
-      do iat = 1, mol%nat
-         fract(:) = matmul(lat_inv, mol%xyz(:, iat))
-         fract(:) = fract(:) - floor(fract(:))
-         xyz_wrap(:, iat) = matmul(mol%lattice, fract)
-
-         ix = min(n_xyz(1), max(1, int(fract(1) * n_xyz(1)) + 1))
-         iy = min(n_xyz(2), max(1, int(fract(2) * n_xyz(2)) + 1))
-         iz = min(n_xyz(3), max(1, int(fract(3) * n_xyz(3)) + 1))
-
-         ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
-
-         !$omp atomic capture
-         nxt(iat) = head(ic)
-         head(ic) = iat
-         !$omp end atomic
-
-         !$omp atomic
-         cell_count(ic) = cell_count(ic) + 1
-      end do
-      !$omp end parallel do
+      call get_linked_cell(mol, n_xyz, head, nxt, cell_count, lat_inv)
 
       ! Calculate median linked-cell population for non-zero cell counts
       nz_count = count(cell_count > 0)
@@ -516,7 +485,6 @@ contains
 
       ! Double buffer estimate if complete matrix mode is enabled
       if (self%complete) prob = prob * 2
-      write(*, *) " estimated neighbors: ", prob*mol%nat
 
       max_neigh_per_thread = int(real((prob * mol%nat), wp) / real(nthreads, wp), int64)
       max_tr_per_thread = max_neigh_per_thread * 6 + 100
@@ -753,63 +721,147 @@ contains
    end subroutine get_wsc_pairs
 
    !> Computes safe linked cell grid sub-divisions for any crystal class
-   subroutine compute_grid(lattice, cutoff, lat_inv, det, n_xyz)
-      !> Lattice vectors [A1 | A2 | A3]
-      real(wp), intent(in) :: lattice(3, 3)
+   subroutine compute_grid(mol, cutoff, det, n_xyz, lat_inv, cell_w)
+      !> Stucture type
+      type(structure_type), intent(in) :: mol
       !> Interaction cutoff radius
       real(wp), intent(in) :: cutoff
       !> Determinant (Volume) of the lattice
       real(wp), intent(out) :: det
-      !> Inverse of the lattice matrix
-      real(wp), intent(out) :: lat_inv(3, 3)
       !> Output: Number of grid subdivisions along each axis
       integer, intent(out) :: n_xyz(3)
+      !> Inverse of the lattice matrix
+      real(wp), intent(out), optional :: lat_inv(3, 3)
+      !> Width of each grid cell
+      real(wp), intent(out), optional :: cell_w(3)
 
-      real(wp) :: L_vec, H(3), cross_ij(3)
-      real(wp) :: dot_12, dot_23, dot_31
+      real(wp) :: L_vec, H(3), cross_ij(3), lattice(3, 3)
+      real(wp) :: dot_12, dot_23, dot_31, max_xyz(3), min_xyz(3)
       integer  :: i
 
-      ! Inverse Lattice Matrix
-      det = lattice(1,1)*(lattice(2,2)*lattice(3,3) - lattice(2,3)*lattice(3,2)) - &
-         lattice(1,2)*(lattice(2,1)*lattice(3,3) - lattice(2,3)*lattice(3,1)) + &
-         lattice(1,3)*(lattice(2,1)*lattice(3,2) - lattice(2,2)*lattice(3,1))
+      if (any(mol%periodic)) then
+         ! Inverse Lattice Matrix
+         lattice = mol%lattice
+         det = lattice(1,1)*(lattice(2,2)*lattice(3,3) - lattice(2,3)*lattice(3,2)) - &
+            lattice(1,2)*(lattice(2,1)*lattice(3,3) - lattice(2,3)*lattice(3,1)) + &
+            lattice(1,3)*(lattice(2,1)*lattice(3,2) - lattice(2,2)*lattice(3,1))
 
-      lat_inv(1,1) =  (lattice(2,2)*lattice(3,3) - lattice(2,3)*lattice(3,2)) / det
-      lat_inv(1,2) = -(lattice(1,2)*lattice(3,3) - lattice(1,3)*lattice(3,2)) / det
-      lat_inv(1,3) =  (lattice(1,2)*lattice(2,3) - lattice(1,3)*lattice(2,2)) / det
-      lat_inv(2,1) = -(lattice(2,1)*lattice(3,3) - lattice(2,3)*lattice(3,1)) / det
-      lat_inv(2,2) =  (lattice(1,1)*lattice(3,3) - lattice(1,3)*lattice(3,1)) / det
-      lat_inv(2,3) = -(lattice(1,1)*lattice(2,3) - lattice(1,3)*lattice(2,1)) / det
-      lat_inv(3,1) =  (lattice(2,1)*lattice(3,2) - lattice(2,2)*lattice(3,1)) / det
-      lat_inv(3,2) = -(lattice(1,1)*lattice(3,2) - lattice(1,2)*lattice(3,1)) / det
-      lat_inv(3,3) =  (lattice(1,1)*lattice(2,2) - lattice(1,2)*lattice(2,1)) / det
+         if (present(lat_inv)) then
+            lat_inv(1,1) =  (lattice(2,2)*lattice(3,3) - lattice(2,3)*lattice(3,2)) / det
+            lat_inv(1,2) = -(lattice(1,2)*lattice(3,3) - lattice(1,3)*lattice(3,2)) / det
+            lat_inv(1,3) =  (lattice(1,2)*lattice(2,3) - lattice(1,3)*lattice(2,2)) / det
+            lat_inv(2,1) = -(lattice(2,1)*lattice(3,3) - lattice(2,3)*lattice(3,1)) / det
+            lat_inv(2,2) =  (lattice(1,1)*lattice(3,3) - lattice(1,3)*lattice(3,1)) / det
+            lat_inv(2,3) = -(lattice(1,1)*lattice(2,3) - lattice(1,3)*lattice(2,1)) / det
+            lat_inv(3,1) =  (lattice(2,1)*lattice(3,2) - lattice(2,2)*lattice(3,1)) / det
+            lat_inv(3,2) = -(lattice(1,1)*lattice(3,2) - lattice(1,2)*lattice(3,1)) / det
+            lat_inv(3,3) =  (lattice(1,1)*lattice(2,2) - lattice(1,2)*lattice(2,1)) / det
+         end if
 
-      ! Calculates strict perpendicular heights via reciprocal cross products
+         ! Calculates strict perpendicular heights via reciprocal cross products
 
-      ! Perpendicular height H1 (normal to a2 x a3)
-      cross_ij(1) = lattice(2,2)*lattice(3,3) - lattice(3,2)*lattice(2,3)
-      cross_ij(2) = lattice(3,2)*lattice(1,3) - lattice(1,2)*lattice(3,3)
-      cross_ij(3) = lattice(1,2)*lattice(2,3) - lattice(2,2)*lattice(1,3)
-      H(1) = abs(det) / sqrt(sum(cross_ij**2))
+         ! Perpendicular height H1 (normal to a2 x a3)
+         cross_ij(1) = lattice(2,2)*lattice(3,3) - lattice(3,2)*lattice(2,3)
+         cross_ij(2) = lattice(3,2)*lattice(1,3) - lattice(1,2)*lattice(3,3)
+         cross_ij(3) = lattice(1,2)*lattice(2,3) - lattice(2,2)*lattice(1,3)
+         H(1) = abs(det) / sqrt(sum(cross_ij**2))
 
-      ! Perpendicular height H2 (normal to a3 x a1)
-      cross_ij(1) = lattice(2,3)*lattice(3,1) - lattice(3,3)*lattice(2,1)
-      cross_ij(2) = lattice(3,3)*lattice(1,1) - lattice(1,3)*lattice(3,1)
-      cross_ij(3) = lattice(1,3)*lattice(2,1) - lattice(2,3)*lattice(1,1)
-      H(2) = abs(det) / sqrt(sum(cross_ij**2))
+         ! Perpendicular height H2 (normal to a3 x a1)
+         cross_ij(1) = lattice(2,3)*lattice(3,1) - lattice(3,3)*lattice(2,1)
+         cross_ij(2) = lattice(3,3)*lattice(1,1) - lattice(1,3)*lattice(3,1)
+         cross_ij(3) = lattice(1,3)*lattice(2,1) - lattice(2,3)*lattice(1,1)
+         H(2) = abs(det) / sqrt(sum(cross_ij**2))
 
-      ! Perpendicular height H3 (normal to a1 x a2)
-      cross_ij(1) = lattice(2,1)*lattice(3,2) - lattice(3,1)*lattice(2,2)
-      cross_ij(2) = lattice(3,1)*lattice(1,2) - lattice(1,1)*lattice(3,2)
-      cross_ij(3) = lattice(1,1)*lattice(2,2) - lattice(2,1)*lattice(1,2)
-      H(3) = abs(det) / sqrt(sum(cross_ij**2))
+         ! Perpendicular height H3 (normal to a1 x a2)
+         cross_ij(1) = lattice(2,1)*lattice(3,2) - lattice(3,1)*lattice(2,2)
+         cross_ij(2) = lattice(3,1)*lattice(1,2) - lattice(1,1)*lattice(3,2)
+         cross_ij(3) = lattice(1,1)*lattice(2,2) - lattice(2,1)*lattice(1,2)
+         H(3) = abs(det) / sqrt(sum(cross_ij**2))
 
-      ! Map cells dynamically to the strict real-space thickness
-      do i = 1, 3
-         n_xyz(i) = max(2, floor(H(i) / cutoff))
-      end do
+         ! Map cells dynamically to the strict real-space thickness
+         do i = 1, 3
+            n_xyz(i) = max(2, floor(H(i) / cutoff))
+         end do
+      else
+         min_xyz = minval(mol%xyz, dim=2) - buffer
+         max_xyz = maxval(mol%xyz, dim=2) + buffer
+
+         ! Number of cells: must be at least 1, and cell width >= cutoff
+         n_xyz = max(1, floor((max_xyz - min_xyz) / (cutoff + eps)))
+         if (present(cell_w)) then
+            cell_w = (max_xyz - min_xyz) / (real(n_xyz, wp) + eps) + eps
+         end if
+         det = product(max_xyz - min_xyz)
+      end if
 
    end subroutine compute_grid
+
+   subroutine get_linked_cell(mol, n_xyz, head, nxt, cell_count, lat_inv, cell_w)
+      !> Stucture type
+      type(structure_type), intent(in) :: mol
+      !> Output: Number of grid subdivisions along each axis
+      integer, intent(in) :: n_xyz(3)
+      !> Linked cell list head array
+      integer, intent(out) :: head(:)
+      !> Linked cell list next array
+      integer, intent(out) :: nxt(:)
+      !> Cell population counts
+      integer, intent(out) :: cell_count(:)
+      !> Inverse of the lattice matrix
+      real(wp), intent(in), optional :: lat_inv(3, 3)
+      !> Width of each grid cell
+      real(wp), intent(in), optional :: cell_w(3)
+
+      integer :: iat, ix, iy, iz, ic
+      real(wp) :: fract(3), min_xyz(3), max_xyz(3)
+
+      if (any(mol%periodic) .and. present(lat_inv)) then
+         !$omp parallel do private(iat, fract, ix, iy, iz, ic) &
+         !$omp shared(mol, lat_inv, n_xyz, head, nxt, cell_count)
+         do iat = 1, mol%nat
+            fract(:) = matmul(lat_inv, mol%xyz(:, iat))
+            fract(:) = fract(:) - floor(fract(:))
+
+            ix = min(n_xyz(1), max(1, int(fract(1) * n_xyz(1)) + 1))
+            iy = min(n_xyz(2), max(1, int(fract(2) * n_xyz(2)) + 1))
+            iz = min(n_xyz(3), max(1, int(fract(3) * n_xyz(3)) + 1))
+
+            ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
+
+            !$omp atomic capture
+            nxt(iat) = head(ic)
+            head(ic) = iat
+            !$omp end atomic
+
+            !$omp atomic
+            cell_count(ic) = cell_count(ic) + 1
+         end do
+         !$omp end parallel do
+      else if (present(cell_w)) then
+         min_xyz = minval(mol%xyz, dim=2) - buffer
+         max_xyz = maxval(mol%xyz, dim=2) + buffer
+
+         !$omp parallel do private(iat, ix, iy, iz, ic) &
+         !$omp shared(mol, n_xyz, min_xyz, cell_w, head, nxt, cell_count)
+         do iat = 1, mol%nat
+            ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
+            iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
+            iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
+
+            ic = ix + n_xyz(1)*(iy-1) + n_xyz(1)*n_xyz(2)*(iz-1)
+
+            !$omp atomic capture
+            nxt(iat) = head(ic)
+            head(ic) = iat
+            !$omp end atomic
+
+            !$omp atomic
+            cell_count(ic) = cell_count(ic) + 1
+         end do
+         !$omp end parallel do
+      end if
+
+   end subroutine get_linked_cell
 
    subroutine get_median(cells, median_val)
       integer, intent(in) :: cells(:)

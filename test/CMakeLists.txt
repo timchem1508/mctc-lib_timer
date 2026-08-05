@@ -48,6 +48,7 @@ set(
   "write-vasp"
   "write-xyz"
   "timer"
+  "csrlist"
 )
 set(
   test-srcs

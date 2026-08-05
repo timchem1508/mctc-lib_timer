@@ -16,6 +16,7 @@ add_subdirectory("data")
 add_subdirectory("env")
 add_subdirectory("io")
 add_subdirectory("ncoord")
+add_subdirectory("csrlist")
 
 set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
 
@@ -27,6 +28,7 @@ list(
   "${dir}/io.f90"
   "${dir}/ncoord.f90"
   "${dir}/version.F90"
+  "${dir}/csrlist.f90"
 )
 
 set(srcs "${srcs}" PARENT_SCOPE)
