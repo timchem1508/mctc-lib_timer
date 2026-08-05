@@ -24,37 +24,42 @@ module testsuite_structure
 contains
 
 
-subroutine get_structure(self, name)
-   type(structure_type), intent(out) :: self
-   character(len=*), intent(in) :: name
+   subroutine get_structure(self, name)
+      type(structure_type), intent(out) :: self
+      character(len=*), intent(in) :: name
 
-   select case(name)
-   case('mindless01'); call mindless01(self)
-   case('mindless02'); call mindless02(self)
-   case('mindless03'); call mindless03(self)
-   case('mindless04'); call mindless04(self)
-   case('mindless05'); call mindless05(self)
-   case('mindless06'); call mindless06(self)
-   case('mindless07'); call mindless07(self)
-   case('mindless08'); call mindless08(self)
-   case('mindless09'); call mindless09(self)
-   case('mindless10'); call mindless10(self)
-   case('x01'); call x01(self)
-   case('x02'); call x02(self)
-   case('x03'); call x03(self)
-   case('x04'); call x04(self)
-   case('x05'); call x05(self)
-   end select
+      select case(name)
+       case('mindless01'); call mindless01(self)
+       case('mindless02'); call mindless02(self)
+       case('mindless03'); call mindless03(self)
+       case('mindless04'); call mindless04(self)
+       case('mindless05'); call mindless05(self)
+       case('mindless06'); call mindless06(self)
+       case('mindless07'); call mindless07(self)
+       case('mindless08'); call mindless08(self)
+       case('mindless09'); call mindless09(self)
+       case('mindless10'); call mindless10(self)
+       case('water'); call water(self)
+       case('methane'); call methane(self)
+       case('fullerene'); call c60(self)
+       case('x01'); call x01(self)
+       case('x02'); call x02(self)
+       case('x03'); call x03(self)
+       case('x04'); call x04(self)
+       case('x05'); call x05(self)
+       case('nacl'); call nacl(self)
+       case('feo2'); call feo2(self)
+      end select
 
-end subroutine get_structure
+   end subroutine get_structure
 
 
-subroutine mindless01(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 16
-   character(len=*), parameter :: sym(nat) = [character(len=2) ::&
+   subroutine mindless01(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 16
+      character(len=*), parameter :: sym(nat) = [character(len=2) ::&
       & "Na", "H", "O", "H", "F", "H", "H", "O", "N", "H", "H", "Cl", "B", "B", "N", "Al"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       & -1.85528263484662_wp,  3.58670515364616_wp, -2.41763729306344_wp, &
       &  4.40178023537845_wp,  0.02338844412653_wp, -4.95457749372945_wp, &
       & -2.98706033463438_wp,  4.76252065456814_wp,  1.27043301573532_wp, &
@@ -72,16 +77,16 @@ subroutine mindless01(self)
       & -2.00438948664892_wp, -2.29235136977220_wp,  2.19782807357059_wp, &
       &  1.12226554109716_wp, -1.36942007032045_wp,  0.48455055461782_wp],&
       & shape(xyz))
-   call new(self, sym, xyz)
-end subroutine mindless01
+      call new(self, sym, xyz)
+   end subroutine mindless01
 
 
-subroutine mindless02(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 16
-   character(len=*), parameter :: sym(nat) = [character(len=2) ::&
+   subroutine mindless02(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 16
+      character(len=*), parameter :: sym(nat) = [character(len=2) ::&
       & "H", "S", "B", "O", "Mg", "H", "H", "H", "Si", "H", "B", "Li", "F", "H", "H", "S"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       & -1.79537625851198_wp, -3.77866422935275_wp, -1.07883558363403_wp, &
       & -2.68278833302782_wp,  0.38892666265890_wp,  1.66214865238427_wp, &
       &  0.11484649791305_wp,  1.48857933226955_wp,  3.65660396510375_wp, &
@@ -99,17 +104,17 @@ subroutine mindless02(self)
       &  1.26806242248758_wp, -2.60409341782411_wp,  0.55162805282247_wp, &
       &  4.11956976339902_wp,  1.59892866766766_wp, -1.39117477789609_wp],&
       & shape(xyz))
-   integer, parameter :: uhf = 2
-   call new(self, sym, xyz, uhf=uhf)
-end subroutine mindless02
+      integer, parameter :: uhf = 2
+      call new(self, sym, xyz, uhf=uhf)
+   end subroutine mindless02
 
 
-subroutine mindless03(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 16
-   character(len=*), parameter :: sym(nat) = [character(len=2) ::&
+   subroutine mindless03(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 16
+      character(len=*), parameter :: sym(nat) = [character(len=2) ::&
       & "C", "O", "H", "Li", "Mg", "Al", "C", "H", "H", "H", "F", "S", "C", "H", "Na", "H"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       & -0.02148551327524_wp, -0.67161751504297_wp, -4.75078512817560_wp, &
       &  1.37792545875526_wp, -3.24818416423144_wp,  3.83896600631495_wp, &
       & -2.23986953822894_wp,  1.64550402751694_wp,  3.42773272178522_wp, &
@@ -127,16 +132,16 @@ subroutine mindless03(self)
       &  4.71194535010347_wp, -1.03648125005561_wp,  3.35573062118779_wp, &
       & -0.16051737061546_wp,  3.89394681976155_wp,  2.23776331451663_wp],&
       & shape(xyz))
-   call new(self, sym, xyz)
-end subroutine mindless03
+      call new(self, sym, xyz)
+   end subroutine mindless03
 
 
-subroutine mindless04(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 16
-   character(len=*), parameter :: sym(nat) = [character(len=2) ::&
+   subroutine mindless04(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 16
+      character(len=*), parameter :: sym(nat) = [character(len=2) ::&
       & "H", "B", "H", "F", "B", "H", "H", "Si", "H", "H", "C", "Al", "Si", "O", "H", "B"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       & -1.34544890768411_wp,  2.85946545334720_wp,  3.11183388215396_wp, &
       & -0.36293929605305_wp,  4.15983774640545_wp,  1.36413101934678_wp, &
       & -3.36268280924844_wp,  4.92951597114402_wp, -3.59085684882314_wp, &
@@ -154,16 +159,16 @@ subroutine mindless04(self)
       & -2.48411958079522_wp, -2.81581487156584_wp, -5.76829803496286_wp, &
       & -0.54241147261516_wp, -0.04348817268188_wp, -3.16920520707912_wp],&
       & shape(xyz))
-   call new(self, sym, xyz)
-end subroutine mindless04
+      call new(self, sym, xyz)
+   end subroutine mindless04
 
 
-subroutine mindless05(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 16
-   character(len=*), parameter :: sym(nat) = [character(len=2) ::&
+   subroutine mindless05(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 16
+      character(len=*), parameter :: sym(nat) = [character(len=2) ::&
       & "B", "P", "H", "H", "B", "P", "H", "Cl", "N", "H", "P", "Si", "H", "H", "P", "N"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       &  0.68391902268453_wp,  0.21679405065309_wp, -2.81441127558071_wp, &
       & -2.67199537993843_wp, -3.97743927106200_wp,  0.03497540139192_wp, &
       &  2.02325266152397_wp, -0.16048070975416_wp, -0.41980608052722_wp, &
@@ -181,17 +186,17 @@ subroutine mindless05(self)
       &  0.94405328902426_wp,  4.99525793054843_wp,  1.18501287451328_wp, &
       & -1.83118967048165_wp,  3.39933176543682_wp,  1.75515887283605_wp],&
       & shape(xyz))
-   integer, parameter :: uhf = 1
-   call new(self, sym, xyz, uhf=uhf)
-end subroutine mindless05
+      integer, parameter :: uhf = 1
+      call new(self, sym, xyz, uhf=uhf)
+   end subroutine mindless05
 
 
-subroutine mindless06(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 16
-   character(len=*), parameter :: sym(nat) = [character(len=2) ::&
+   subroutine mindless06(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 16
+      character(len=*), parameter :: sym(nat) = [character(len=2) ::&
       & "B", "N", "H", "O", "B", "H", "Al", "H", "B", "Mg", "H", "H", "H", "H", "C", "H"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       &  0.10912945825730_wp,  1.64180252123600_wp,  0.27838149792131_wp, &
       & -2.30085163837888_wp,  0.87765138232225_wp, -0.60457694150897_wp, &
       &  2.78083551168063_wp,  4.95421363506113_wp,  0.40788634984219_wp, &
@@ -209,17 +214,17 @@ subroutine mindless06(self)
       &  0.86969979951508_wp,  4.43363816376984_wp,  1.02355776570620_wp, &
       &  4.05637089597643_wp, -1.52300699610852_wp, -0.29218485610105_wp],&
       & shape(xyz))
-   integer, parameter :: uhf = 1
-   call new(self, sym, xyz, uhf=uhf)
-end subroutine mindless06
+      integer, parameter :: uhf = 1
+      call new(self, sym, xyz, uhf=uhf)
+   end subroutine mindless06
 
 
-subroutine mindless07(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 16
-   character(len=*), parameter :: sym(nat) = [character(len=2) ::&
+   subroutine mindless07(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 16
+      character(len=*), parameter :: sym(nat) = [character(len=2) ::&
       & "C", "H", "B", "H", "H", "Cl", "F", "N", "C", "H", "S", "H", "H", "O", "F", "Mg"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       & -3.75104222741336_wp, -5.81308736205268_wp, -1.22507366840233_wp, &
       & -1.45226572768296_wp, -3.01878767879831_wp,  2.38723142561073_wp, &
       & -1.99423317853240_wp, -3.52953889999752_wp, -1.30301724065129_wp, &
@@ -237,17 +242,17 @@ subroutine mindless07(self)
       &  3.05358934464082_wp,  7.15252337445235_wp,  1.82164153773112_wp, &
       &  1.29297161858681_wp,  0.78926456763834_wp,  0.91903438556425_wp],&
       & shape(xyz))
-   integer, parameter :: uhf = 1
-   call new(self, sym, xyz, uhf=uhf)
-end subroutine mindless07
+      integer, parameter :: uhf = 1
+      call new(self, sym, xyz, uhf=uhf)
+   end subroutine mindless07
 
 
-subroutine mindless08(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 16
-   character(len=*), parameter :: sym(nat) = [character(len=2) ::&
+   subroutine mindless08(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 16
+      character(len=*), parameter :: sym(nat) = [character(len=2) ::&
       & "C", "O", "B", "F", "H", "Al", "H", "H", "O", "B", "Be", "C", "H", "H", "B", "F"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       & -1.27823293129313_wp,  0.06442674490989_wp,  2.76980447300615_wp, &
       &  2.05039033278229_wp,  0.64690940303039_wp, -0.29571013189632_wp, &
       & -0.07388472989895_wp,  2.46033979750309_wp, -1.30590420482375_wp, &
@@ -265,17 +270,17 @@ subroutine mindless08(self)
       & -2.18263847972349_wp,  2.31604957286801_wp,  1.11461091308323_wp, &
       &  2.02857282501340_wp, -1.56917620284149_wp, -4.65841766477431_wp],&
       & shape(xyz))
-   integer, parameter :: uhf = 1
-   call new(self, sym, xyz, uhf=uhf)
-end subroutine mindless08
+      integer, parameter :: uhf = 1
+      call new(self, sym, xyz, uhf=uhf)
+   end subroutine mindless08
 
 
-subroutine mindless09(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 16
-   character(len=*), parameter :: sym(nat) = [character(len=2) ::&
+   subroutine mindless09(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 16
+      character(len=*), parameter :: sym(nat) = [character(len=2) ::&
       & "H", "H", "H", "H", "Li", "H", "C", "B", "H", "H", "Si", "H", "Cl", "F", "H", "B"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       &  3.97360649552839_wp,  1.71723751297383_wp, -0.51862929250676_wp, &
       &  0.16903666216522_wp,  1.73154352333176_wp, -0.40099024352959_wp, &
       & -3.94463844105182_wp, -1.24346369608005_wp,  0.09565841726334_wp, &
@@ -293,16 +298,16 @@ subroutine mindless09(self)
       &  1.96938102642596_wp,  3.74070925169244_wp, -3.03185101883736_wp, &
       & -4.32034786008576_wp, -1.66533650719069_wp,  2.28302516508337_wp],&
       & shape(xyz))
-   call new(self, sym, xyz)
-end subroutine mindless09
+      call new(self, sym, xyz)
+   end subroutine mindless09
 
 
-subroutine mindless10(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 16
-   character(len=*), parameter :: sym(nat) = [character(len=2) ::&
+   subroutine mindless10(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 16
+      character(len=*), parameter :: sym(nat) = [character(len=2) ::&
       & "H", "Si", "H", "Cl", "C", "H", "F", "H", "C", "N", "B", "H", "Mg", "C", "H", "H"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       &  3.57062307661218_wp, -1.68792229443234_wp,  2.78939425857465_wp, &
       & -2.08994110527129_wp,  3.25317728228563_wp, -0.42147881550833_wp, &
       &  2.13532981939105_wp, -1.71356933061236_wp, -2.49234593851880_wp, &
@@ -320,19 +325,121 @@ subroutine mindless10(self)
       &  5.67004330685832_wp, -1.05218123504276_wp,  0.25282456342591_wp, &
       & -4.17031726246173_wp,  0.06724895615223_wp,  2.79231605575371_wp],&
       & shape(xyz))
-   integer, parameter :: uhf = 1
-   call new(self, sym, xyz, uhf=uhf)
-end subroutine mindless10
+      integer, parameter :: uhf = 1
+      call new(self, sym, xyz, uhf=uhf)
+   end subroutine mindless10
 
+   subroutine water(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 3
+      character(len=*), parameter :: sym(nat) = [character(len=2) :: &
+      & "O ", "H ", "H "]
+      real(wp), parameter :: xyz(3, nat) = reshape([ &
+      &  0.00000000000000_wp,  0.00000000000000_wp,  0.22415759160000_wp, &
+      &  0.00000000000000_wp,  1.43233673000000_wp, -0.89663036640000_wp, &
+      &  0.00000000000000_wp, -1.43233673000000_wp, -0.89663036640000_wp], &
+      & shape(xyz))
+      call new(self, sym, xyz)
+   end subroutine water
 
-subroutine x01(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 32
-   character(len=*), parameter :: sym(nat) = [character(len=4) ::&
+   subroutine methane(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 5
+      character(len=*), parameter :: sym(nat) = [character(len=2) :: &
+      & "C ", "H ", "H ", "H ", "H "]
+      real(wp), parameter :: xyz(3, nat) = reshape([ &
+      &  0.00000000000000_wp,  0.00000000000000_wp,  0.00000000000000_wp, &
+      &  1.18590326400000_wp,  1.18590326400000_wp,  1.18590326400000_wp, &
+      & -1.18590326400000_wp, -1.18590326400000_wp,  1.18590326400000_wp, &
+      & -1.18590326400000_wp,  1.18590326400000_wp, -1.18590326400000_wp, &
+      &  1.18590326400000_wp, -1.18590326400000_wp, -1.18590326400000_wp], &
+      & shape(xyz))
+      call new(self, sym, xyz)
+   end subroutine methane
+
+   subroutine c60(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 60
+      character(len=*), parameter :: sym(nat) = [character(len=2) :: &
+      & "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", &
+      & "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", &
+      & "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", &
+      & "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", &
+      & "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", &
+      & "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C ", "C "]
+      real(wp), parameter :: xyz(3, nat) = reshape([ &
+      &  0.0000000000_wp,  1.3535660850_wp,  6.5703923380_wp, &
+      &  0.0000000000_wp, -1.3535660850_wp,  6.5703923380_wp, &
+      &  0.0000000000_wp,  1.3535660850_wp, -6.5703923380_wp, &
+      &  0.0000000000_wp, -1.3535660850_wp, -6.5703923380_wp, &
+      &  1.3535660850_wp,  6.5703923380_wp,  0.0000000000_wp, &
+      & -1.3535660850_wp,  6.5703923380_wp,  0.0000000000_wp, &
+      &  1.3535660850_wp, -6.5703923380_wp,  0.0000000000_wp, &
+      & -1.3535660850_wp, -6.5703923380_wp,  0.0000000000_wp, &
+      &  6.5703923380_wp,  0.0000000000_wp,  1.3535660850_wp, &
+      & -6.5703923380_wp,  0.0000000000_wp,  1.3535660850_wp, &
+      &  6.5703923380_wp,  0.0000000000_wp, -1.3535660850_wp, &
+      & -6.5703923380_wp,  0.0000000000_wp, -1.3535660850_wp, &
+      &  1.3535660850_wp,  4.8972580710_wp,  4.3802615590_wp, &
+      &  1.3535660850_wp,  4.8972580710_wp, -4.3802615590_wp, &
+      &  1.3535660850_wp, -4.8972580710_wp,  4.3802615590_wp, &
+      &  1.3535660850_wp, -4.8972580710_wp, -4.3802615590_wp, &
+      & -1.3535660850_wp,  4.8972580710_wp,  4.3802615590_wp, &
+      & -1.3535660850_wp,  4.8972580710_wp, -4.3802615590_wp, &
+      & -1.3535660850_wp, -4.8972580710_wp,  4.3802615590_wp, &
+      & -1.3535660850_wp, -4.8972580710_wp, -4.3802615590_wp, &
+      &  4.8972580710_wp,  4.3802615590_wp,  1.3535660850_wp, &
+      &  4.8972580710_wp,  4.3802615590_wp, -1.3535660850_wp, &
+      &  4.8972580710_wp, -4.3802615590_wp,  1.3535660850_wp, &
+      &  4.8972580710_wp, -4.3802615590_wp, -1.3535660850_wp, &
+      & -4.8972580710_wp,  4.3802615590_wp,  1.3535660850_wp, &
+      & -4.8972580710_wp,  4.3802615590_wp, -1.3535660850_wp, &
+      & -4.8972580710_wp, -4.3802615590_wp,  1.3535660850_wp, &
+      & -4.8972580710_wp, -4.3802615590_wp, -1.3535660850_wp, &
+      &  4.3802615590_wp,  1.3535660850_wp,  4.8972580710_wp, &
+      &  4.3802615590_wp,  1.3535660850_wp, -4.8972580710_wp, &
+      &  4.3802615590_wp, -1.3535660850_wp,  4.8972580710_wp, &
+      &  4.3802615590_wp, -1.3535660850_wp, -4.8972580710_wp, &
+      & -4.3802615590_wp,  1.3535660850_wp,  4.8972580710_wp, &
+      & -4.3802615590_wp,  1.3535660850_wp, -4.8972580710_wp, &
+      & -4.3802615590_wp, -1.3535660850_wp,  4.8972580710_wp, &
+      & -4.3802615590_wp, -1.3535660850_wp, -4.8972580710_wp, &
+      &  2.7071321700_wp,  5.7337986030_wp,  2.1901307790_wp, &
+      &  2.7071321700_wp,  5.7337986030_wp, -2.1901307790_wp, &
+      &  2.7071321700_wp, -5.7337986030_wp,  2.1901307790_wp, &
+      &  2.7071321700_wp, -5.7337986030_wp, -2.1901307790_wp, &
+      & -2.7071321700_wp,  5.7337986030_wp,  2.1901307790_wp, &
+      & -2.7071321700_wp,  5.7337986030_wp, -2.1901307790_wp, &
+      & -2.7071321700_wp, -5.7337986030_wp,  2.1901307790_wp, &
+      & -2.7071321700_wp, -5.7337986030_wp, -2.1901307790_wp, &
+      &  5.7337986030_wp,  2.1901307790_wp,  2.7071321700_wp, &
+      &  5.7337986030_wp,  2.1901307790_wp, -2.7071321700_wp, &
+      &  5.7337986030_wp, -2.1901307790_wp,  2.7071321700_wp, &
+      &  5.7337986030_wp, -2.1901307790_wp, -2.7071321700_wp, &
+      & -5.7337986030_wp,  2.1901307790_wp,  2.7071321700_wp, &
+      & -5.7337986030_wp,  2.1901307790_wp, -2.7071321700_wp, &
+      & -5.7337986030_wp, -2.1901307790_wp,  2.7071321700_wp, &
+      & -5.7337986030_wp, -2.1901307790_wp, -2.7071321700_wp, &
+      &  2.1901307790_wp,  2.7071321700_wp,  5.7337986030_wp, &
+      &  2.1901307790_wp,  2.7071321700_wp, -5.7337986030_wp, &
+      &  2.1901307790_wp, -2.7071321700_wp,  5.7337986030_wp, &
+      &  2.1901307790_wp, -2.7071321700_wp, -5.7337986030_wp, &
+      & -2.1901307790_wp,  2.7071321700_wp,  5.7337986030_wp, &
+      & -2.1901307790_wp,  2.7071321700_wp, -5.7337986030_wp, &
+      & -2.1901307790_wp, -2.7071321700_wp,  5.7337986030_wp, &
+      & -2.1901307790_wp, -2.7071321700_wp, -5.7337986030_wp], &
+      & shape(xyz))
+      call new(self, sym, xyz)
+   end subroutine c60
+
+   subroutine x01(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 32
+      character(len=*), parameter :: sym(nat) = [character(len=4) ::&
       & "O", "O", "O", "O", "C", "C", "C", "C", "C", "C", "C", "C", "C", "C", &
       & "C", "C", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", &
       & "H", "H", "H", "H"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       &  8.66499304004865_wp,  9.33379706146984_wp,  7.91683397818847_wp, &
       & 11.12335640640559_wp,  2.15906103856442_wp, 12.28606540623589_wp, &
       &  2.69933763795316_wp,  8.69604933222823_wp,  5.94619038919326_wp, &
@@ -366,23 +473,23 @@ subroutine x01(self)
       &  1.70097366892267_wp,  6.88253129604813_wp, 10.28258692216369_wp, &
       &  3.02585151643235_wp, 10.74223721977969_wp,  1.45047192019470_wp],&
       & shape(xyz))
-   real(wp), parameter :: lattice(3, 3) = reshape([&
+      real(wp), parameter :: lattice(3, 3) = reshape([&
       & 12.17191845_wp,  0.09308248_wp,  0.41423668_wp, &
       &  0.08731987_wp, 12.55440630_wp,  0.31568135_wp, &
       &  0.42750296_wp, -1.80907922_wp, 12.77606779_wp],&
       & shape(lattice))
-   call new(self, sym, xyz, lattice=lattice)
-end subroutine x01
+      call new(self, sym, xyz, lattice=lattice)
+   end subroutine x01
 
 
-subroutine x02(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 32
-   character(len=*), parameter :: sym(nat) = [character(len=4) ::&
+   subroutine x02(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 32
+      character(len=*), parameter :: sym(nat) = [character(len=4) ::&
       & "O", "O", "O", "O", "O", "O", "O", "O", "C", "C", "C", "C", "C", "C", &
       & "C", "C", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", &
       & "H", "H", "H", "H"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       &  4.63745097550818_wp,  2.37915954409831_wp, 19.12271349268357_wp, &
       &  6.72709904800693_wp,  0.45406655172709_wp, 16.05143697871524_wp, &
       &  6.91256964714223_wp,  2.38436998330633_wp,  6.39788951244788_wp, &
@@ -416,24 +523,24 @@ subroutine x02(self)
       &  2.83286106954203_wp, 10.46215767099852_wp, 24.06567365395194_wp, &
       &  3.53590396893376_wp,  4.66141487828773_wp, 20.80838381072642_wp],&
       & shape(xyz))
-   real(wp), parameter :: lattice(3, 3) = reshape([&
+      real(wp), parameter :: lattice(3, 3) = reshape([&
       &  7.28162822_wp, -0.00060036_wp,  0.00257376_wp, &
       &  0.00297342_wp, 10.95374740_wp,  0.00144914_wp, &
       & -0.01715980_wp, -0.00425337_wp, 25.44979900_wp],&
       & shape(lattice))
-   call new(self, sym, xyz, lattice=lattice)
-end subroutine x02
+      call new(self, sym, xyz, lattice=lattice)
+   end subroutine x02
 
 
-subroutine x03(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 52
-   character(len=*), parameter :: sym(nat) = [character(len=4) ::&
+   subroutine x03(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 52
+      character(len=*), parameter :: sym(nat) = [character(len=4) ::&
       & "C", "C", "C", "C", "C", "C", "C", "C", "C", "C", "C", "C", "C", "C", &
       & "C", "C", "C", "C", "C", "C", "H", "H", "H", "H", "H", "H", "H", "H", &
       & "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", &
       & "H", "H", "H", "H", "H", "H", "H", "H", "H", "H"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       &  6.85499925334061_wp,  0.58339620591570_wp, 15.88596621412105_wp, &
       &  9.24413370501684_wp,  2.95651635041689_wp,  2.46485240796786_wp, &
       &  5.31512352904071_wp,  9.21510777326209_wp,  9.20126499327503_wp, &
@@ -487,22 +594,22 @@ subroutine x03(self)
       & 11.34300883914548_wp,  6.83035223370403_wp,  6.32356113982028_wp, &
       & 11.61750407306765_wp, 11.34613663351561_wp, 14.69710851363604_wp],&
       & shape(xyz))
-   real(wp), parameter :: lattice(3, 3) = reshape([&
+      real(wp), parameter :: lattice(3, 3) = reshape([&
       & 12.51117748_wp,  0.00000000_wp,  0.00000000_wp, &
       &  0.00000000_wp, 12.51117748_wp,  0.00000000_wp, &
       &  0.00000000_wp,  0.00000000_wp, 16.78940405_wp],&
       & shape(lattice))
-   call new(self, sym, xyz, lattice=lattice)
-end subroutine x03
+      call new(self, sym, xyz, lattice=lattice)
+   end subroutine x03
 
 
-subroutine x04(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 16
-   character(len=*), parameter :: sym(nat) = [character(len=4) ::&
+   subroutine x04(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 16
+      character(len=*), parameter :: sym(nat) = [character(len=4) ::&
       & "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "N", "N", &
       & "N", "N"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       &  4.15467418193883_wp,  3.33328901394025_wp,  1.66323391111685_wp, &
       &  3.33328901394025_wp,  1.66323391111685_wp,  4.15467418193883_wp, &
       &  1.66323391111685_wp,  4.15467418193883_wp,  3.33328901394025_wp, &
@@ -520,24 +627,24 @@ subroutine x04(self)
       &  8.43506671658056_wp,  7.55541720275509_wp,  3.76255039758519_wp, &
       &  3.76255039758519_wp,  8.43506671658056_wp,  7.55541720275509_wp],&
       & shape(xyz))
-   real(wp), parameter :: lattice(3, 3) = reshape([&
+      real(wp), parameter :: lattice(3, 3) = reshape([&
       &  9.47387737_wp,  0.00000000_wp,  0.00000000_wp, &
       &  0.00000000_wp,  9.47387737_wp,  0.00000000_wp, &
       &  0.00000000_wp,  0.00000000_wp,  9.47387737_wp],&
       & shape(lattice))
-   call new(self, sym, xyz, lattice=lattice)
-end subroutine x04
+      call new(self, sym, xyz, lattice=lattice)
+   end subroutine x04
 
 
-subroutine x05(self)
-   type(structure_type), intent(out) :: self
-   integer, parameter :: nat = 48
-   character(len=*), parameter :: sym(nat) = [character(len=4)::&
+   subroutine x05(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 48
+      character(len=*), parameter :: sym(nat) = [character(len=4)::&
       & "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", "H", &
       & "H", "H", "H", "H", "H", "H", "C", "C", "C", "C", "C", "C", "C", "C", &
       & "C", "C", "C", "C", "C", "C", "C", "C", "C", "C", "C", "C", "C", "C", &
       & "C", "C", "C", "C", "C", "C"]
-   real(wp), parameter :: xyz(3, nat) = reshape([&
+      real(wp), parameter :: xyz(3, nat) = reshape([&
       & -3.66228842747680_wp,  0.96035860621450_wp,  8.20178752989411_wp, &
       & -0.50644649048699_wp,  6.57586752834559_wp,  8.97052794903630_wp, &
       &  7.42888971418823_wp, 10.27084821061875_wp,  8.96429185419075_wp, &
@@ -587,13 +694,56 @@ subroutine x05(self)
       & -8.18818150477655_wp,  2.12896498575612_wp, 11.70703975080573_wp, &
       &  4.01944658681277_wp,  7.74447390788721_wp,  5.46508675555361_wp],&
       & shape(xyz))
-   real(wp), parameter :: lattice(3, 3) = reshape([&
+      real(wp), parameter :: lattice(3, 3) = reshape([&
       & 15.87093489225165_wp,  0.00000000000000_wp, -0.01227036698519_wp, &
       &  0.00000000000000_wp, 11.23112234609398_wp,  0.00000000000000_wp, &
       &-12.10426425260664_wp,  0.00000000000000_wp, 17.17840096263681_wp],&
       & shape(lattice))
-   call new(self, sym, xyz, lattice=lattice)
-end subroutine x05
+      call new(self, sym, xyz, lattice=lattice)
+   end subroutine x05
+
+   subroutine nacl(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 2
+      real(wp), parameter :: ang2bohr = 1.8897261245650618_wp
+
+      character(len=*), parameter :: sym(nat) = [character(len=4) :: "Na", "Cl"]
+
+      real(wp), parameter :: xyz(3, nat) = ang2bohr * reshape([&
+      &  0.0000000000000000000_wp,  0.0000000000000000000_wp,  0.0000000000000000000_wp, &
+      &  4.0246354200000009627_wp,  2.3236243431271024207_wp,  1.6430505299553113119_wp  &
+      & ], shape(xyz))
+
+      real(wp), parameter :: lattice(3, 3) = ang2bohr * reshape([&
+      &  4.024635420000000_wp,  0.000000000000000_wp,  0.000000000000000_wp, &
+      &  2.012317710000000_wp,  3.485436514690654_wp,  0.000000000000000_wp, &
+      &  2.012317710000000_wp,  1.161812171563551_wp,  3.286101059910623_wp  &
+      & ], shape(lattice))
+
+      call new(self, sym, xyz, lattice=lattice)
+   end subroutine nacl
+
+   subroutine feo2(self)
+      type(structure_type), intent(out) :: self
+      integer, parameter :: nat = 3
+      real(wp), parameter :: ang2bohr = 1.8897261245650618_wp
+
+      character(len=*), parameter :: sym(nat) = [character(len=4) :: "Fe", "O", "O"]
+
+      real(wp), parameter :: xyz(3, nat) = ang2bohr * reshape([&
+      &  0.0000000000000001478_wp,  0.0000000000000002560_wp,  2.4140450000000006625_wp, &
+      &  1.4956899849568998651_wp,  0.8635369981683533869_wp,  1.4493781337300004619_wp, &
+      & -0.0000000149568990678_wp,  1.7270740222428173638_wp,  3.3787118662700006411_wp  &
+      & ], shape(xyz))
+
+      real(wp), parameter :: lattice(3, 3) = ang2bohr * reshape([&
+      &  2.991379940000000_wp,  0.000000000000000_wp,  0.000000000000000_wp, &
+      & -1.495689969999999_wp,  2.590611020411170_wp,  0.000000000000000_wp, &
+      &  0.000000000000000_wp,  0.000000000000001_wp,  4.828090000000001_wp  &
+      & ], shape(lattice))
+
+      call new(self, sym, xyz, lattice=lattice)
+   end subroutine feo2
 
 
 end module testsuite_structure
