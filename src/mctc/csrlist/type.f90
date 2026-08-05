@@ -128,7 +128,12 @@ contains
       allocate(self%inl(mol%nat+1), source=0)
 
       if (any(mol%periodic)) then
-         call generate_wsc(self, mol)
+         if (present(trans)) then
+            self%trans = trans
+            call generate_hybrid(self, mol)
+         else
+            call generate_wsc(self, mol)
+         end if
       else
          if (present(trans)) then
             self%trans = trans
@@ -161,34 +166,29 @@ contains
 
       ! Statistical estimation variables
       integer :: nz_count, median_val
-      integer, allocatable :: hist(:)
 
       ! OpenMP specific variables
       integer(int64) :: max_neigh_per_thread
       integer :: nthreads, tid
       integer :: start_idx, local_offset, n_neigh
-      ! Track current neighbor count per thread
       integer, allocatable :: thread_img(:)
-      ! Start index in thread local buffer per atom
       integer, allocatable :: thread_inl(:)
-      ! Track which thread processed which atom
       integer, allocatable :: atrack(:)
-      ! Thread-local neighbor storage [max_neigh, nthreads]
       integer, allocatable :: thread_nlat(:,:)
-      ! Thread-local translation storage [max_neigh, nthreads]
       integer, allocatable :: thread_nltr(:,:)
+      logical, allocatable :: thread_checked(:,:)
 
       img = 0
       cutoff2 = self%cutoff**2
 
-      ! 1. Generate linked-cell grid for neighbour search
+      ! 1. Generate linked-cell grid
       if (any(mol%periodic)) then
          call compute_grid(mol=mol, cutoff=self%cutoff, det=det, n_xyz=n_xyz, lat_inv=lat_inv)
       else
          call compute_grid(mol=mol, cutoff=self%cutoff, det=det, n_xyz=n_xyz, cell_w=cell_w)
       end if
 
-      ! 2. Build the Linked List using Atomic Capture
+      ! 2. Build Linked List
       allocate(head(product(n_xyz)), source=0)
       allocate(cell_count(product(n_xyz)), source=0)
       allocate(nxt(mol%nat), source=0)
@@ -199,18 +199,15 @@ contains
          call get_linked_cell(mol, n_xyz, head, nxt, cell_count, cell_w=cell_w)
       end if
 
-      ! Linked-cell statistics: median and non-zero cell count
       nz_count = count(cell_count > 0)
       call get_median(cell_count, median_val)
 
-      ! Estimate the number of neighbors based on median cell population and volume
       vol = det * real(nz_count, wp) / real(product(n_xyz), wp)
       dens = real(median_val, wp) * real(product(n_xyz), wp) / vol
       prob = max(int(init_size, int64), int(ceiling(dens * self%cutoff**3.0_wp * 4.0_wp), int64))
-      ! Double buffer estimate if complete matrix mode is enabled
       if (self%complete) prob = prob * 2
 
-      ! 3. Setup OpenMP Thread-Local Environments
+      ! 3. OpenMP Setup
       !$omp parallel
       !$omp master
       nthreads = omp_get_num_threads()
@@ -221,35 +218,33 @@ contains
       allocate(atrack(mol%nat), source=0)
       allocate(thread_inl(mol%nat), source=0)
 
-      ! Estimate a safe thread-local allocation size with a safety buffer
       max_neigh_per_thread = int(real((prob * mol%nat), wp) / real(nthreads, wp), int64)
       allocate(thread_nlat(max_neigh_per_thread, nthreads))
       if (any(mol%periodic)) allocate(thread_nltr(max_neigh_per_thread, nthreads))
 
-      ! 4. Threaded Loop Search over nearby cells
+      ! 4. Search Loop
       if (any(mol%periodic)) then
-         ! Periodic branch
+         ! Periodic Branch
+
+         allocate(thread_checked(mol%nat, nthreads), source=.false.)
 
          !$omp parallel do schedule(guided) &
          !$omp private(iat, tid, ix, iy, iz, dk, dj, di) &
          !$omp private(jx, jy, jz, jc, jat, itr, vec, r2) &
          !$omp shared(mol, self, head, nxt, thread_img, thread_inl) &
-         !$omp shared(thread_nlat, thread_nltr, cell_w, min_xyz) &
+         !$omp shared(thread_nlat, thread_nltr, cell_w, min_xyz, thread_checked) &
          !$omp shared(n_xyz, cutoff2, atrack, max_neigh_per_thread)
          do iat = 1, mol%nat
             tid = omp_get_thread_num() + 1
             atrack(iat) = tid
             thread_inl(iat) = thread_img(tid)
 
-            ! Inject the diagonal element (self-interaction) as the first neighbour
+            ! Inject Diagonal (self-interaction) at position 1
             thread_img(tid) = thread_img(tid) + 1
-            if (thread_img(tid) > max_neigh_per_thread) then
-               error stop "Thread local neighbor buffer overflow! Increase safety margin."
-            end if
+            if (thread_img(tid) > max_neigh_per_thread) error stop "Buffer overflow!"
             thread_nlat(thread_img(tid), tid) = iat
             thread_nltr(thread_img(tid), tid) = 1
 
-            ! Off-diagonal neighbor search within the cutoff radius
             fract(:) = matmul(lat_inv, mol%xyz(:, iat))
             fract(:) = fract(:) - floor(fract(:))
             ix = min(n_xyz(1), max(1, int(fract(1) * n_xyz(1)) + 1))
@@ -257,45 +252,60 @@ contains
             iz = min(n_xyz(3), max(1, int(fract(3) * n_xyz(3)) + 1))
 
             do dk = -1, 1; do dj = -1, 1; do di = -1, 1
-                     jx = ix + di; jy = iy + dj; jz = iz + dk
-
-                     if (jx < 1 .or. jx > n_xyz(1) .or. &
-                        jy < 1 .or. jy > n_xyz(2) .or. &
-                        jz < 1 .or. jz > n_xyz(3)) cycle
-
+                     jx = modulo(ix + di - 1, n_xyz(1)) + 1
+                     jy = modulo(iy + dj - 1, n_xyz(2)) + 1
+                     jz = modulo(iz + dk - 1, n_xyz(3)) + 1
                      jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
                      jat = head(jc)
 
                      do while (jat > 0)
-                        if (jat > iat .or. self%complete) then
-                           jat = nxt(jat); cycle
-                        end if
-
-                        do itr = 1, size(self%trans, 2)
-                           vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
-                           r2 = sum(vec**2)
-
-                           if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
-
-                           thread_img(tid) = thread_img(tid) + 1
-
-                           if (thread_img(tid) > max_neigh_per_thread) then
-                              error stop "Thread local neighbor buffer overflow! Increase safety margin."
+                        if (.not. thread_checked(jat, tid)) then
+                           thread_checked(jat, tid) = .true.
+                           ! Upper triangle condition: skip lower triangle if incomplete
+                           if (.not. self%complete .and. jat < iat) then
+                              jat = nxt(jat); cycle
                            end if
 
-                           thread_nlat(thread_img(tid), tid) = jat
-                           thread_nltr(thread_img(tid), tid) = itr
-                        end do
+                           do itr = 1, size(self%trans, 2)
+                              ! Skip diagonal element (already injected)
+                              if (iat == jat .and. itr == 1) cycle
+
+                              vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
+                              r2 = sum(vec**2)
+
+                              if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
+
+                              thread_img(tid) = thread_img(tid) + 1
+                              if (thread_img(tid) > max_neigh_per_thread) error stop "Buffer overflow!"
+
+                              thread_nlat(thread_img(tid), tid) = jat
+                              thread_nltr(thread_img(tid), tid) = itr
+                           end do
+                        end if
                         jat = nxt(jat)
                      end do
                   end do; end do; end do
-            ! Temporarily store the neighbor count in `inl(iat + 1)`
+            ! Clean up local checked array for next atom
+            thread_checked(iat, tid) = .false.
+            do dk = -1, 1; do dj = -1, 1; do di = -1, 1
+                     jx = modulo(ix + di - 1, n_xyz(1)) + 1
+                     jy = modulo(iy + dj - 1, n_xyz(2)) + 1
+                     jz = modulo(iz + dk - 1, n_xyz(3)) + 1
+                     jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
+                     jat = head(jc)
+                     do while (jat > 0)
+                        thread_checked(jat, tid) = .false.
+                        jat = nxt(jat)
+                     end do
+                  end do; end do; end do
+
+            ! Temporarily store neighbor count for atom iat at position (iat + 1)
             self%inl(iat + 1) = thread_img(tid) - thread_inl(iat)
          end do
          !$omp end parallel do
 
       else
-         ! Non-periodic branch
+         ! Non-periodic Branch
          min_xyz = minval(mol%xyz, dim=2) - buffer
 
          !$omp parallel do schedule(guided) &
@@ -309,14 +319,11 @@ contains
             atrack(iat) = tid
             thread_inl(iat) = thread_img(tid)
 
-            ! Inject the diagonal element (self-interaction) as the first neighbour
+            ! Inject Diagonal (self-interaction) at position 1
             thread_img(tid) = thread_img(tid) + 1
-            if (thread_img(tid) > max_neigh_per_thread) then
-               error stop "Thread local neighbor buffer overflow! Increase safety margin."
-            end if
+            if (thread_img(tid) > max_neigh_per_thread) error stop "Buffer overflow!"
             thread_nlat(thread_img(tid), tid) = iat
 
-            ! Off-diagonal neighbor search within the cutoff radius
             ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
             iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
             iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
@@ -332,7 +339,8 @@ contains
                      jat = head(jc)
 
                      do while (jat > 0)
-                        if (jat > iat .or. self%complete) then
+                        ! Skip diagonal (already injected) or lower triangle if incomplete
+                        if (jat == iat .or. (.not. self%complete .and. jat < iat)) then
                            jat = nxt(jat); cycle
                         end if
 
@@ -344,35 +352,27 @@ contains
                         end if
 
                         thread_img(tid) = thread_img(tid) + 1
-
-                        if (thread_img(tid) > max_neigh_per_thread) then
-                           error stop "Thread local neighbor buffer overflow! Increase safety margin."
-                        end if
+                        if (thread_img(tid) > max_neigh_per_thread) error stop "Buffer overflow!"
 
                         thread_nlat(thread_img(tid), tid) = jat
                         jat = nxt(jat)
                      end do
                   end do; end do; end do
-            ! Temporarily store the neighbor count in self%inl
             self%inl(iat + 1) = thread_img(tid) - thread_inl(iat)
          end do
          !$omp end parallel do
       end if
 
-      ! 5. The Stitching Phase
-
-      ! Reconstruction of the actual `self%inl` pointer
+      ! 5. Stitching Phase
       self%inl(1) = 1
       do iat = 1, mol%nat
          self%inl(iat + 1) = self%inl(iat) + self%inl(iat + 1)
       end do
 
-      ! Reallocate global storage targets to the exact final size
       img = self%inl(mol%nat + 1) - 1
       call resize(self%nlat, img)
       if (any(mol%periodic)) call resize(self%nltr, img)
 
-      ! Parallel scatter-copy data from thread buffers into the sorted global CSR structure
       !$omp parallel do schedule(static) private(iat, tid, start_idx, local_offset, n_neigh) &
       !$omp shared(mol, self, atrack, thread_inl, thread_nlat, thread_nltr)
       do iat = 1, mol%nat
@@ -382,7 +382,6 @@ contains
          n_neigh = self%inl(iat + 1) - self%inl(iat)
 
          if (n_neigh > 0) then
-            ! The first element copied here will naturally be the explicitly added diagonal `iat`
             self%nlat(start_idx : start_idx + n_neigh - 1) = &
                thread_nlat(local_offset + 1 : local_offset + n_neigh, tid)
 
@@ -394,7 +393,7 @@ contains
       end do
       !$omp end parallel do
 
-      ! 6. Cleanup Memory
+      ! 6. Cleanup
       if (allocated(head)) deallocate(head)
       if (allocated(nxt)) deallocate(nxt)
       deallocate(thread_img, atrack, thread_inl, thread_nlat, cell_count)
@@ -780,7 +779,7 @@ contains
 
          ! Map cells dynamically to the strict real-space thickness
          do i = 1, 3
-            n_xyz(i) = max(2, floor(H(i) / cutoff))
+            n_xyz(i) = max(1, floor(H(i) / cutoff))
          end do
       else
          min_xyz = minval(mol%xyz, dim=2) - buffer
