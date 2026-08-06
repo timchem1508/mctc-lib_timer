@@ -92,6 +92,41 @@ contains
 
    end subroutine collect_csrlist
 
+   subroutine print_array(a)
+      integer, intent(in) :: a(:)
+      integer :: i, n_items
+
+      n_items = size(a)
+      if (n_items == 0) then
+         write(*, '(A)') '[]'
+         return
+      end if
+
+      ! Print opening bracket and line continuation
+      write(*, '(A)') '[&'
+
+      do i = 1, n_items
+         ! Print indent and line-start ampersand at the beginning of each 10-item block
+         if (mod(i - 1, 10) == 0) then
+            write(*, '(A)', advance='no') '      & '
+         end if
+
+         ! Print integer (I0 dynamically adjusts width with no extra padding)
+         write(*, '(I0)', advance='no') a(i)
+
+         if (i < n_items) then
+            write(*, '(A)', advance='no') ', '
+            ! End of a 10-item line: print trailing ampersand and newline
+            if (mod(i, 10) == 0) then
+               write(*, '(A)') '&'
+            end if
+         else
+            ! Closing bracket after the last element
+            write(*, '(A)') ']'
+         end if
+      end do
+   end subroutine print_array
+
 
 !> Generate reference 1-based CSR list
    subroutine gen_verlet(mol, trans, cutoff, row_ptr, col_ind, nltr, complete)
@@ -130,7 +165,7 @@ contains
          nltr(nnz) = 1
 
          ! 2. Off-Diagonal Neighbours (inverse to fit the linked-cell list ordering)
-         do jat = mol%nat, 1, -1
+         do jat = 1, mol%nat
             ! Skip lower triangle if incomplete
             if (.not. complete .and. jat < iat) cycle
 
@@ -152,8 +187,15 @@ contains
          row_ptr(iat + 1) = nnz + 1
       end do
 
+      write(*, '(A)') "Reference CSR pointer:"
+      call print_array(row_ptr)
+
       call resize(col_ind, nnz)
+      write(*, '(A)') "Reference CSR list:"
+      call print_array(col_ind)
       call resize(nltr, nnz)
+      write(*, '(A)') "Reference translations:"
+      call print_array(nltr)
 
    end subroutine gen_verlet
 
@@ -241,6 +283,7 @@ contains
 
       allocate(list)
       call new_csr_list(list, mol, cutoff, trans, cmp)
+      call sort_csr_rows(list%inl, list%nlat)
 
       allocate(ref_ptr(mol%nat + 1))
       call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp)
@@ -282,7 +325,6 @@ contains
 
       allocate(ref_ptr(mol%nat + 1))
       call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp)
-      call sort_csr_rows(ref_ptr, ref_list, ref_nltr)
 
       if (any(list%inl /= ref_ptr)) then
          call test_failed(error, "Neighbour list pointer array does not match reference.")
@@ -306,14 +348,19 @@ contains
 
    subroutine sort_csr_rows(row_ptr, col_ind, nltr)
       integer, intent(in) :: row_ptr(:)
-      integer, intent(inout) :: col_ind(:), nltr(:)
+      integer, intent(inout) :: col_ind(:)
+      integer, intent(inout), optional :: nltr(:)
       integer :: i, start_idx, end_idx
 
       do i = 1, size(row_ptr) - 1
          start_idx = row_ptr(i) + 1
          end_idx   = row_ptr(i+1) - 1
          if (end_idx > start_idx) then
-            call sort_pair(col_ind(start_idx:end_idx), nltr(start_idx:end_idx))
+            if (present(nltr)) then
+               call sort_pair(col_ind(start_idx:end_idx), nltr(start_idx:end_idx))
+            else
+               call sort_single(col_ind(start_idx:end_idx))
+            end if
          end if
       end do
    end subroutine sort_csr_rows
@@ -322,15 +369,13 @@ contains
       integer, intent(inout) :: keys(:), vals(:)
       integer :: i, j, key_item, val_item
       integer :: n
-
       n = size(keys)
       do i = 2, n
          key_item = keys(i)
          val_item = vals(i)
          j = i - 1
          do while (j >= 1)
-            if (keys(j) < key_item) exit
-            if (keys(j) == key_item .and. vals(j) <= val_item) exit
+            if (keys(j) <= key_item) exit
             keys(j + 1) = keys(j)
             vals(j + 1) = vals(j)
             j = j - 1
@@ -338,7 +383,36 @@ contains
          keys(j + 1) = key_item
          vals(j + 1) = val_item
       end do
+      i = 1
+      do while (i <= n)
+         j = i
+         do while (j <= n)
+            if (keys(j) /= keys(i)) exit
+            j = j + 1
+         end do
+         if (j - i > 1) then
+            call sort_single(vals(i:j-1))
+         end if
+         i = j
+      end do
    end subroutine sort_pair
+
+   pure subroutine sort_single(arr)
+      integer, intent(inout) :: arr(:)
+      integer :: i, j, item, n
+
+      n = size(arr)
+      do i = 2, n
+         item = arr(i)
+         j = i - 1
+         do while (j >= 1)
+            if (arr(j) <= item) exit
+            arr(j + 1) = arr(j)
+            j = j - 1
+         end do
+         arr(j + 1) = item
+      end do
+   end subroutine sort_single
 
    subroutine test_grid_water(error)
 
