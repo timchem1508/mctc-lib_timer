@@ -218,7 +218,7 @@ contains
       allocate(atrack(mol%nat), source=0)
       allocate(thread_inl(mol%nat), source=0)
 
-      max_neigh_per_thread = int(real((prob * mol%nat), wp) / real(nthreads, wp), int64)
+      max_neigh_per_thread = int(real((prob * mol%nat), wp) / real(nthreads, wp), int64) * size(self%trans, 2)
       allocate(thread_nlat(max_neigh_per_thread, nthreads))
       if (any(mol%periodic)) allocate(thread_nltr(max_neigh_per_thread, nthreads))
 
@@ -339,7 +339,7 @@ contains
                      jat = head(jc)
 
                      do while (jat > 0)
-                        ! Skip diagonal (already injected) or lower triangle if incomplete
+                        ! Skip lower triangle if incomplete
                         if (jat == iat .or. (.not. self%complete .and. jat < iat)) then
                            jat = nxt(jat); cycle
                         end if
@@ -485,7 +485,7 @@ contains
       ! Double buffer estimate if complete matrix mode is enabled
       if (self%complete) prob = prob * 2
 
-      max_neigh_per_thread = int(real((prob * mol%nat), wp) / real(nthreads, wp), int64)
+      max_neigh_per_thread = int(real((prob * mol%nat), wp) / real(nthreads, wp), int64) * size(self%trans, 2)
       max_tr_per_thread = max_neigh_per_thread * 6 + 100
 
       ! Allocate thread metrics
@@ -519,9 +519,7 @@ contains
          tid = omp_get_thread_num() + 1
          start_count = thread_img(tid)
 
-         ! ------------------------------------------------------------------
-         ! A. PRE-INSERT DIAGONAL ENTRY (j = iat) WITH ALL SELF-TRANSLATIONS
-         ! ------------------------------------------------------------------
+         ! Search for diagonal periodic interactions
          call get_wsc_pairs(trans, zero_vec, nimg_count, tridx_arr, r2_min)
 
          ! Total translations for j = iat: 1 (Identity R=0) + periodic self-images within cutoff
@@ -551,9 +549,7 @@ contains
 
          thread_ptr_tr(tid) = thread_ptr_tr(tid) + total_self_nimg
 
-         ! ------------------------------------------------------------------
-         ! B. CROSS-ATOM NEIGHBOR SEARCH
-         ! ------------------------------------------------------------------
+         ! Search for off-diagonal periodic interactions
          fract(:) = matmul(lat_inv, mol%xyz(:, iat))
          fract(:) = fract(:) - floor(fract(:))
          ix = min(n_xyz(1), max(1, int(fract(1) * n_xyz(1)) + 1))
@@ -619,7 +615,7 @@ contains
       end do
       !$omp end parallel do
 
-      ! 6. The Stitching Phase (Prefix Sums)
+      ! 6. The Stitching Phase
       thread_global_start(1) = 0
       thread_global_tr_start(1) = 0
 
@@ -632,7 +628,7 @@ contains
       ptr_tr = thread_global_tr_start(nthreads) + thread_ptr_tr(nthreads)
       self%nimg_max = maxval(thread_nimg_max)
 
-      ! Construct standard 1-based CSR Row Pointer Array in-place via prefix sum
+      ! Construct the CSR row pointer array (size = nat + 1)
       self%inl(1) = 1
       do iat = 1, mol%nat
          self%inl(iat + 1) = self%inl(iat) + self%inl(iat + 1)
