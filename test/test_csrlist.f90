@@ -67,7 +67,11 @@ contains
       & new_unittest("csr-vs-verlet-nacl-complete", test_list_nacl_complete), &
       & new_unittest("csr-vs-verlet-feo2-complete", test_list_feo2_complete), &
       & new_unittest("csr-vs-verlet-x04-complete", test_list_x04_complete), &
-      & new_unittest("csr-vs-verlet-x05-complete", test_list_x05_complete) &
+      & new_unittest("csr-vs-verlet-x05-complete", test_list_x05_complete), &
+      & new_unittest("spmv-mchrg", test_spmv_mcharge), &
+      & new_unittest("spmv-standard-csr", test_spmv_csr), &
+      & new_unittest("spmv-standard-csr-complete-list", test_spmv_csr_complete), &
+      & new_unittest("spmv-full-matrix", test_spmv_fullmat) &
       & ]
 
    end subroutine collect_csrlist
@@ -345,8 +349,8 @@ contains
          end do
       end do
 
-
    end subroutine test_pbc_list_gen
+
 
    subroutine test_grid_water(error)
 
@@ -861,5 +865,211 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_x05_complete
+
+   subroutine test_spmv_mcharge(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      real(wp), parameter :: mdiag(5) = [&
+         1.95301539743829E+01_wp, 1.60040861485901E+01_wp, 1.60040861378386E+01_wp, 1.60040861396139E+01_wp, 1.60040861464410E+01_wp &
+         ]
+
+      real(wp), parameter :: mlist(15) = [&
+         0.00000000000000E+00_wp, -1.40182420507753E+00_wp, -1.40182420319457E+00_wp, -1.40182420372164E+00_wp, -1.40182420463048E+00_wp, &
+         0.00000000000000E+00_wp, -3.28540587512732E-01_wp, -3.28540587378075E-01_wp, -3.28540587649869E-01_wp,  0.00000000000000E+00_wp, &
+         -3.28540587252914E-01_wp, -3.28540587468433E-01_wp,  0.00000000000000E+00_wp, -3.28540587433195E-01_wp,  0.00000000000000E+00_wp &
+         ]
+
+      real(wp), parameter :: vec(5) = [&
+         -1.32959314386409E-01_wp, +3.39873408224628E-02_wp, +3.39873400653214E-02_wp, +3.39873402792960E-02_wp, +3.39873406420377E-02_wp &
+         ]
+
+      real(wp), parameter :: vrhs(5) = [&
+         -2.78729298821854E+00_wp, 6.96823253402542E-01_wp, 6.96823240431084E-01_wp, 6.96823244062044E-01_wp, 6.96823250322879E-01_wp &
+         ]
+
+      integer, parameter :: ptr(6) = [&
+         1, 6, 10, 13, 15, 16 &
+         ]
+
+      integer, parameter :: cindx(15) = [&
+         1, 2, 3, 4, 5, 2, 3, 4, 5, 3, &
+         4, 5, 4, 5, 5 &
+         ]
+
+      type(csr_list), allocatable :: list
+
+      real(wp), allocatable :: y(:)
+
+      allocate(list)
+      allocate(list%inl, source = ptr)
+      allocate(list%nlat, source = cindx)
+
+      allocate(y(size(vec)), source = 0.0_wp)
+      call gemv_cmp(list, mlist, mdiag, vec, y, alpha=1.0_wp, beta=0.0_wp, symmetric=.true.)
+
+      if (any(abs(y - vrhs) > thr)) then
+         call test_failed(error, "Multicharge version of the SpMV crashed.")
+         print'(20a)', "Expected product:"
+         print'(5es21.14)', vrhs
+         print'(20a)', "Diff:"
+         print'(5es21.14)', y - vrhs
+      end if
+
+   end subroutine test_spmv_mcharge
+
+   subroutine test_spmv_csr(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      real(wp), parameter :: mlist(15) = [&
+         1.95301539743829E+01_wp, -1.40182420507753E+00_wp, -1.40182420319457E+00_wp, -1.40182420372164E+00_wp, -1.40182420463048E+00_wp, &
+         1.60040861485901E+01_wp, -3.28540587512732E-01_wp, -3.28540587378075E-01_wp, -3.28540587649869E-01_wp,  1.60040861378386E+01_wp, &
+         -3.28540587252914E-01_wp, -3.28540587468433E-01_wp,  1.60040861396139E+01_wp, -3.28540587433195E-01_wp,  1.60040861464410E+01_wp &
+         ]
+
+      real(wp), parameter :: vec(5) = [&
+         -1.32959314386409E-01_wp, +3.39873408224628E-02_wp, +3.39873400653214E-02_wp, +3.39873402792960E-02_wp, +3.39873406420377E-02_wp &
+         ]
+
+      real(wp), parameter :: vrhs(5) = [&
+         -2.78729298821854E+00_wp, 6.96823253402542E-01_wp, 6.96823240431084E-01_wp, 6.96823244062044E-01_wp, 6.96823250322879E-01_wp &
+         ]
+
+      integer, parameter :: ptr(6) = [&
+         1, 6, 10, 13, 15, 16 &
+         ]
+
+      integer, parameter :: cindx(15) = [&
+         1, 2, 3, 4, 5, 2, 3, 4, 5, 3, &
+         4, 5, 4, 5, 5 &
+         ]
+
+      type(csr_list), allocatable :: list
+
+      real(wp), allocatable :: y(:)
+
+      allocate(list)
+      allocate(list%inl, source = ptr)
+      allocate(list%nlat, source = cindx)
+
+      allocate(y(size(vec)), source = 0.0_wp)
+      call gemv_cmp(list, mlist, vec, y, alpha=1.0_wp, beta=0.0_wp, symmetric=.true.)
+
+      if (any(abs(y - vrhs) > thr)) then
+         call test_failed(error, "Standard CSR version of the SpMV crashed.")
+         print'(20a)', "Expected product:"
+         print'(5es21.14)', vrhs
+         print'(20a)', "Diff:"
+         print'(5es21.14)', y - vrhs
+      end if
+
+   end subroutine test_spmv_csr
+
+   subroutine test_spmv_csr_complete(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      real(wp), parameter :: mlist(25) = [ &
+         1.95301539743829E+01_wp, -1.40182420507753E+00_wp, -1.40182420319457E+00_wp, -1.40182420372164E+00_wp, -1.40182420463048E+00_wp, &
+         1.60040861485901E+01_wp, -1.40182420507753E+00_wp, -3.28540587512732E-01_wp, -3.28540587378075E-01_wp, -3.28540587649869E-01_wp, &
+         1.60040861378386E+01_wp, -1.40182420319457E+00_wp, -3.28540587512732E-01_wp, -3.28540587252914E-01_wp, -3.28540587468433E-01_wp, &
+         1.60040861396139E+01_wp, -1.40182420372164E+00_wp, -3.28540587378075E-01_wp, -3.28540587252914E-01_wp, -3.28540587433195E-01_wp, &
+         1.60040861464410E+01_wp, -1.40182420463048E+00_wp, -3.28540587649869E-01_wp, -3.28540587468433E-01_wp, -3.28540587433195E-01_wp &
+         ]
+
+      real(wp), parameter :: vec(5) = [&
+         -1.32959314386409E-01_wp, +3.39873408224628E-02_wp, +3.39873400653214E-02_wp, +3.39873402792960E-02_wp, +3.39873406420377E-02_wp &
+         ]
+
+      real(wp), parameter :: vrhs(5) = [&
+         -2.78729298821854E+00_wp, 6.96823253402542E-01_wp, 6.96823240431084E-01_wp, 6.96823244062044E-01_wp, 6.96823250322879E-01_wp &
+         ]
+
+      integer, parameter :: ptr(6) = [&
+         1, 6, 11, 16, 21, 26 &
+         ]
+
+      integer, parameter :: cindx(25) = [&
+         1, 2, 3, 4, 5, 2, 1, 3, 4, 5, &
+         3, 1, 2, 4, 5, 4, 1, 2, 3, 5, &
+         5, 1, 2, 3, 4 &
+         ]
+
+      type(csr_list), allocatable :: list
+
+      real(wp), allocatable :: y(:)
+
+      allocate(list)
+      allocate(list%inl, source = ptr)
+      allocate(list%nlat, source = cindx)
+
+      allocate(y(size(vec)), source = 0.0_wp)
+      call gemv_cmp(list, mlist, vec, y, alpha=1.0_wp, beta=0.0_wp, symmetric=.false., complete=.true.)
+
+      if (any(abs(y - vrhs) > thr)) then
+         call test_failed(error, "Full matrix version of the SpMV crashed.")
+         print'(20a)', "Expected product:"
+         print'(5es21.14)', vrhs
+         print'(20a)', "Diff:"
+         print'(5es21.14)', y - vrhs
+      end if
+
+   end subroutine test_spmv_csr_complete
+
+   subroutine test_spmv_fullmat(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      real(wp), parameter :: matrix(5,5) = reshape([ &
+         1.95301539743829E+01_wp, -1.40182420507753E+00_wp, -1.40182420319457E+00_wp, -1.40182420372164E+00_wp, -1.40182420463048E+00_wp, &
+         -1.40182420507753E+00_wp,  1.60040861485901E+01_wp, -3.28540587512732E-01_wp, -3.28540587378075E-01_wp, -3.28540587649869E-01_wp, &
+         -1.40182420319457E+00_wp, -3.28540587512732E-01_wp,  1.60040861378386E+01_wp, -3.28540587252914E-01_wp, -3.28540587468433E-01_wp, &
+         -1.40182420372164E+00_wp, -3.28540587378075E-01_wp, -3.28540587252914E-01_wp,  1.60040861396139E+01_wp, -3.28540587433195E-01_wp, &
+         -1.40182420463048E+00_wp, -3.28540587649869E-01_wp, -3.28540587468433E-01_wp, -3.28540587433195E-01_wp,  1.60040861464410E+01_wp  &
+         ], [5,5])
+
+      real(wp), parameter :: vec(5) = [&
+         -1.32959314386409E-01_wp, +3.39873408224628E-02_wp, +3.39873400653214E-02_wp, +3.39873402792960E-02_wp, +3.39873406420377E-02_wp &
+         ]
+
+      real(wp), parameter :: vrhs(5) = [&
+         -2.78729298821854E+00_wp, 6.96823253402542E-01_wp, 6.96823240431084E-01_wp, 6.96823244062044E-01_wp, 6.96823250322879E-01_wp &
+         ]
+
+      integer, parameter :: ptr(6) = [&
+         1, 6, 11, 16, 21, 26 &
+         ]
+
+      integer, parameter :: cindx(25) = [&
+         1, 2, 3, 4, 5, 2, 1, 3, 4, 5, &
+         3, 1, 2, 4, 5, 4, 1, 2, 3, 5, &
+         5, 1, 2, 3, 4 &
+         ]
+
+      type(csr_list), allocatable :: list
+
+      real(wp), allocatable :: y(:)
+
+      allocate(list)
+      allocate(list%inl, source = ptr)
+      allocate(list%nlat, source = cindx)
+
+      allocate(y(size(vec)), source = 0.0_wp)
+      call gemv_cmp(list, matrix, vec, y, alpha=1.0_wp, beta=0.0_wp)
+
+      if (any(abs(y - vrhs) > thr)) then
+         call test_failed(error, "Full matrix version of the SpMV crashed.")
+         print'(20a)', "Expected product:"
+         print'(5es21.14)', vrhs
+         print'(20a)', "Diff:"
+         print'(5es21.14)', y - vrhs
+      end if
+
+   end subroutine test_spmv_fullmat
 
 end module test_csrlist
