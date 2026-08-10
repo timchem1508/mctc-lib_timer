@@ -254,27 +254,41 @@ contains
 
       type(csr_list), allocatable   :: list
 
-      !> Reference Lists
+      ! Reference Lists
       integer, allocatable :: ref_ptr(:), ref_list(:), ref_nltr(:)
+      integer :: iat, jat, kat
 
       allocate(list)
       call new_csr_list(list, mol, cutoff, trans, cmp)
-      call sort_csr_rows(list%inl, list%nlat)
 
       allocate(ref_ptr(mol%nat + 1))
       call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp)
 
       if (any(list%inl /= ref_ptr)) then
          call test_failed(error, "Neighbour list pointer array does not match reference.")
-         write(*,*) "Generated pointer:", list%inl
-         write(*,*) "Reference pointer:", ref_ptr
+         print'(20a)', "Generated pointer:"
+         print'(10i6)', list%inl
+         print'(20a)', "Reference pointer:"
+         print'(10i6)', ref_ptr
       end if
 
-      if (any(list%nlat /= ref_list)) then
-         call test_failed(error, "Neighbour list array does not match reference.")
-         write(*,*) "Generated list:", list%nlat
-         write(*,*) "Reference list:", ref_list
-      end if
+      do iat = 1, mol%nat
+         do kat = list%inl(iat), list%inl(iat+1) - 1
+            jat = list%nlat(kat)
+            if (.not. any(jat == ref_list(ref_ptr(iat):ref_ptr(iat+1)-1))) then
+               call test_failed(error, "Neighbour list array does not match reference.")
+               print'(20a)', "Generated list:"
+               print'(10i6)', list%nlat
+               print'(20a)', "Reference list:"
+               print'(10i6)', ref_list
+               exit
+            end if
+            if (any(jat == list%nlat(kat+1:list%inl(iat+1)-1))) then
+               call test_failed(error, "Neighbours duplicates.")
+               exit
+            end if
+         end do
+      end do
 
    end subroutine test_mol_list_gen
 
@@ -292,12 +306,12 @@ contains
 
       type(csr_list), allocatable   :: list
 
-      !> Reference Lists
+      ! Reference Lists
       integer, allocatable :: ref_ptr(:), ref_list(:), ref_nltr(:)
+      integer :: iat, jat, kat, tr
 
       allocate(list)
       call new_csr_list(list, mol, cutoff, trans, cmp)
-      call sort_csr_rows(list%inl, list%nlat, list%nltr)
 
       allocate(ref_ptr(mol%nat + 1))
       call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp)
@@ -308,87 +322,31 @@ contains
          write(*,*) "Reference pointer:", ref_ptr
       end if
 
-      if (any(list%nlat /= ref_list)) then
-         call test_failed(error, "Neighbour list array does not match reference.")
-         write(*,*) "Generated list:", list%nlat
-         write(*,*) "Reference list:", ref_list
-      end if
+      do iat = 1, mol%nat
+         do kat = list%inl(iat), list%inl(iat+1) - 1
+            jat = list%nlat(kat)
+            tr = list%nltr(kat)
+            if (.not. any(jat == ref_list(ref_ptr(iat):ref_ptr(iat+1)-1))) then
+               call test_failed(error, "Neighbour list array does not match reference.")
+               print'(20a)', "Generated list:"
+               print'(10i6)', list%nlat
+               print'(20a)', "Reference list:"
+               print'(10i6)', ref_list
+               exit
+            end if
+            if (.not. any(tr == ref_nltr(ref_ptr(iat):ref_ptr(iat+1)-1))) then
+               call test_failed(error, "Neighbour list translations array does not match reference.")
+               print'(20a)', "Generated translations:"
+               print'(10i6)', list%nltr
+               print'(20a)', "Reference translations:"
+               print'(10i6)', ref_nltr
+               exit
+            end if
+         end do
+      end do
 
-      if (any(list%nltr /= ref_nltr)) then
-         call test_failed(error, "Neighbour list translations array does not match reference.")
-         write(*,*) "Generated translations:", list%nltr
-         write(*,*) "Reference translations:", ref_nltr
-      end if
 
    end subroutine test_pbc_list_gen
-
-   subroutine sort_csr_rows(row_ptr, col_ind, nltr)
-      integer, intent(in) :: row_ptr(:)
-      integer, intent(inout) :: col_ind(:)
-      integer, intent(inout), optional :: nltr(:)
-      integer :: i, start_idx, end_idx
-
-      do i = 1, size(row_ptr) - 1
-         start_idx = row_ptr(i) + 1
-         end_idx   = row_ptr(i+1) - 1
-         if (end_idx > start_idx) then
-            if (present(nltr)) then
-               call sort_pair(col_ind(start_idx:end_idx), nltr(start_idx:end_idx))
-            else
-               call sort_single(col_ind(start_idx:end_idx))
-            end if
-         end if
-      end do
-   end subroutine sort_csr_rows
-
-   pure subroutine sort_pair(keys, vals)
-      integer, intent(inout) :: keys(:), vals(:)
-      integer :: i, j, key_item, val_item
-      integer :: n
-      n = size(keys)
-      do i = 2, n
-         key_item = keys(i)
-         val_item = vals(i)
-         j = i - 1
-         do while (j >= 1)
-            if (keys(j) <= key_item) exit
-            keys(j + 1) = keys(j)
-            vals(j + 1) = vals(j)
-            j = j - 1
-         end do
-         keys(j + 1) = key_item
-         vals(j + 1) = val_item
-      end do
-      i = 1
-      do while (i <= n)
-         j = i
-         do while (j <= n)
-            if (keys(j) /= keys(i)) exit
-            j = j + 1
-         end do
-         if (j - i > 1) then
-            call sort_single(vals(i:j-1))
-         end if
-         i = j
-      end do
-   end subroutine sort_pair
-
-   pure subroutine sort_single(arr)
-      integer, intent(inout) :: arr(:)
-      integer :: i, j, item, n
-
-      n = size(arr)
-      do i = 2, n
-         item = arr(i)
-         j = i - 1
-         do while (j >= 1)
-            if (arr(j) <= item) exit
-            arr(j + 1) = arr(j)
-            j = j - 1
-         end do
-         arr(j + 1) = item
-      end do
-   end subroutine sort_single
 
    subroutine test_grid_water(error)
 
