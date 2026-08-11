@@ -17,6 +17,7 @@ subdir('env')
 subdir('io')
 subdir('ncoord')
 subdir('csrlist')
+subdir('wignerseitz')
 
 srcs += files(
   'cutoff.f90',
@@ -26,4 +27,5 @@ srcs += files(
   'ncoord.f90',
   'csrlist.f90',
   'version.F90',
+  'wignerseitz.f90'
 )
