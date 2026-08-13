@@ -52,6 +52,7 @@ program tester
    use test_write_vasp, only : collect_write_vasp
    use test_write_xyz, only : collect_write_xyz
    use test_csrlist, only : collect_csrlist
+   use test_wignerseitz, only : collect_wignerseitz
    implicit none
    integer :: stat, is
    character(len=:), allocatable :: suite_name, test_name
@@ -94,7 +95,8 @@ program tester
    & new_testsuite("write-turbomole", collect_write_turbomole), &
    & new_testsuite("write-vasp", collect_write_vasp), &
    & new_testsuite("write-xyz", collect_write_xyz), &
-   & new_testsuite("csrlist", collect_csrlist) &
+   & new_testsuite("csrlist", collect_csrlist), &
+   & new_testsuite("wignerseitz", collect_wignerseitz) &
    & ]
 
    call get_argument(1, suite_name)

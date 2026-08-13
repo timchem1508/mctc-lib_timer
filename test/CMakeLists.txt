@@ -49,6 +49,7 @@ set(
   "write-xyz"
   "timer"
   "csrlist"
+  "wignerseitz"
 )
 set(
   test-srcs

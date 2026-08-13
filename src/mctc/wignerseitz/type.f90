@@ -11,7 +11,10 @@
 ! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 ! See the License for the specific language governing permissions and
 ! limitations under the License.
-module wignerseitz_type
+
+!> @file mctc/wignerseitz/type.f90
+!> Declaration of the ccylic cluster Wigner-Seitz type, generation, and weights evaluation.
+module mctc_wignerseitz_type
    use mctc_env, only: wp
    use mctc_io, only: structure_type
    use mctc_cutoff, only: get_lattice_points
@@ -24,6 +27,9 @@ module wignerseitz_type
       integer :: nimg_max
       integer, allocatable :: nimg(:, :)
       integer, allocatable :: tridx(:, :, :)
+      integer, allocatable :: itr_list(:)
+      integer, allocatable :: nimg_list(:)
+      integer, allocatable :: tridx_list(:)
       real(wp), allocatable :: trans(:, :)
    end type wignerseitz_cell
 
@@ -214,4 +220,4 @@ contains
 
    end subroutine get_wignerseitz_weights
 
-end module wignerseitz_type
+end module mctc_wignerseitz_type

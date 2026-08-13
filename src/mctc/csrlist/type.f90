@@ -53,6 +53,7 @@ module mctc_csrlist_type
    use mctc_io, only : structure_type
    use mctc_io_resize, only : resize
    use mctc_cutoff, only: get_lattice_points
+   use mctc_wignerseitz, only : wignerseitz_cell
    implicit none
    private
 
@@ -75,15 +76,8 @@ module mctc_csrlist_type
       integer, allocatable :: nltr(:)
       !> Lattice translation vector
       real(wp), allocatable :: trans(:, :)
-      !> Wiegner-Seitz cell parameters
-      !> Maximal number of interaction images
-      integer :: nimg_max
-      !> Pointer index of the Wiegner-Seitz translation vector for each neighbour
-      integer, allocatable :: itr(:)
-      !> Number of images per cross-interaction
-      integer, allocatable :: nimg(:)
-      !> Primitive unit cell image index per cross-interaction
-      integer, allocatable :: tridx(:)
+      !> Wigner-Seitz cell type
+      type(wignerseitz_cell), allocatable :: wsc
    end type csr_list
 
    ! Default input
@@ -99,11 +93,13 @@ module mctc_csrlist_type
 contains
 
    !> Create new neighbourlist for a given geometry and cutoff
-   subroutine new_csr_list(self, mol, cutoff, trans, complete)
+   subroutine new_csr_list(self, mol, wsc, cutoff, trans, complete)
       !> Instance of the neighbourlist
       type(csr_list), intent(out) :: self
       !> Structure type
       type(structure_type), intent(in) :: mol
+      !> Wigner-Seitz cell type
+      type(wignerseitz_cell), intent(inout), allocatable, optional :: wsc
       !> Realspace cutoff for neighbourlist generation
       real(wp), intent(in), optional :: cutoff
       !> Lattice translation vectors for periodic systems
@@ -127,11 +123,12 @@ contains
       allocate(self%inl(mol%nat+1), source=0)
 
       if (any(mol%periodic)) then
-         if (present(trans)) then
+         if (present(wsc)) then
+            call generate_wsc(self, mol, wsc)
+            call move_alloc(wsc, self%wsc)
+         else if (present(trans)) then
             self%trans = trans
             call generate_hybrid(self, mol)
-         else
-            call generate_wsc(self, mol)
          end if
       else
          if (present(trans)) then
@@ -400,13 +397,15 @@ contains
    end subroutine generate_hybrid
 
 !> Generator of the CSR-based Hybrid Neighbour List for Periodic systems using Wigner-Seitz Cell Search
-   subroutine generate_wsc(self, mol)
+   subroutine generate_wsc(self, mol, wsc)
       use omp_lib
 
       !> Instance of the neighbourlist
       type(csr_list), intent(inout) :: self
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
+      !> Wigner-Seitz cell type
+      type(wignerseitz_cell), intent(inout) :: wsc
 
       integer :: iat, jat, img, jc
       integer :: ix, iy, iz, jx, jy, jz, di, dj, dk, d
@@ -449,10 +448,11 @@ contains
       ntr = size(trans, 2)
       if (allocated(self%trans)) deallocate(self%trans)
       allocate(self%trans, source=trans)
+      allocate(wsc%trans, source=trans)
 
       cutoff2 = self%cutoff**2
       img = 0
-      self%nimg_max = 0
+      wsc%nimg_max = 0
 
       ! 2. Grid Sizing calculation based on lattice geometry and cutoff
       call compute_grid(mol, self%cutoff, det, n_xyz, lat_inv=lat_inv)
@@ -614,7 +614,7 @@ contains
 
       img = thr_start(nthr) + thr_img(nthr)
       trptr = thr_trstart(nthr) + thr_trptr(nthr)
-      self%nimg_max = maxval(thr_nimg_max)
+      wsc%nimg_max = maxval(thr_nimg_max)
 
       ! CSR Pointer array construction
       self%inl(1) = 1
@@ -624,12 +624,12 @@ contains
 
       ! 7. CSR List Resizing & Stream Copying
       call resize(self%nlat, img)
-      call resize(self%nimg, img)
-      call resize(self%itr, img + 1)
-      call resize(self%tridx, trptr)
+      call resize(wsc%nimg_list, img)
+      call resize(wsc%itr_list, img + 1)
+      call resize(wsc%tridx_list, trptr)
 
       !$omp parallel private(tid, t_start, t_size, t_tr_start) &
-      !$omp shared(self, thr_start, thr_trstart, thr_img, thr_trptr, &
+      !$omp shared(self, wsc, thr_start, thr_trstart, thr_img, thr_trptr, &
       !$omp        thr_nlat, thr_nimg, thr_itr, thr_tridx)
       tid = omp_get_thread_num() + 1
       t_start = thr_start(tid)
@@ -638,15 +638,15 @@ contains
 
       if (t_size > 0) then
          self%nlat(t_start + 1 : t_start + t_size) = thr_nlat(1 : t_size, tid)
-         self%nimg(t_start + 1 : t_start + t_size) = thr_nimg(1 : t_size, tid)
-         self%itr(t_start + 1 : t_start + t_size) = thr_itr(1 : t_size, tid) + t_tr_start
+         wsc%nimg_list(t_start + 1 : t_start + t_size) = thr_nimg(1 : t_size, tid)
+         wsc%itr_list(t_start + 1 : t_start + t_size) = thr_itr(1 : t_size, tid) + t_tr_start
       end if
 
       if (thr_trptr(tid) > 0) then
-         self%tridx(t_tr_start + 1 : t_tr_start + thr_trptr(tid)) = thr_tridx(1 : thr_trptr(tid), tid)
+         wsc%tridx_list(t_tr_start + 1 : t_tr_start + thr_trptr(tid)) = thr_tridx(1 : thr_trptr(tid), tid)
       end if
       !$omp end parallel
-      self%itr(img + 1) = trptr + 1
+      wsc%itr_list(img + 1) = trptr + 1
 
       deallocate(head, nxt, ccount)
       deallocate(thr_img, thr_trptr)
