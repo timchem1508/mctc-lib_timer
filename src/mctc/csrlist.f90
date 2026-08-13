@@ -12,6 +12,12 @@
 ! See the License for the specific language governing permissions and
 ! limitations under the License.
 
+!> @dir mctc/csrlist
+!> Contains type, generation routines, and basic sparse linear algebra procedures.
+
+!> @file mctc/csrlist.f90
+!> Reexports access to the CSR neighbour list components.
+
 !> Environment module providing CSR-based neighbour list
 !> and Linear Algebra procedures based on this saprsity structure.
 

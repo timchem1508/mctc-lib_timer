@@ -12,6 +12,7 @@
 ! See the License for the specific language governing permissions and
 ! limitations under the License.
 
+!> @file mctc/csrlist/linal.f90
 !> Matrix-vector and Matrix-matrix routines for CSR compressed matrices.
 module mctc_csrlist_linal
    use mctc_env, only : wp

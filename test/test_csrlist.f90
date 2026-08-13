@@ -223,7 +223,7 @@ contains
       integer :: iat, jat, kat, itr
 
       allocate(list)
-      call new_csr_list(list, mol, cutoff, trans, cmp)
+      call new_csr_list(list, mol, cutoff=cutoff, trans=trans, complete=cmp)
 
       do iat = 1, mol%nat
          do kat = list%inl(iat) + 1, list%inl(iat+1) -1
@@ -263,7 +263,7 @@ contains
       integer :: iat, jat, kat
 
       allocate(list)
-      call new_csr_list(list, mol, cutoff, trans, cmp)
+      call new_csr_list(list, mol, cutoff=cutoff, trans=trans, complete=cmp)
 
       allocate(ref_ptr(mol%nat + 1))
       call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp)
@@ -315,7 +315,7 @@ contains
       integer :: iat, jat, kat, tr
 
       allocate(list)
-      call new_csr_list(list, mol, cutoff, trans, cmp)
+      call new_csr_list(list, mol, cutoff=cutoff, trans=trans, complete=cmp)
 
       allocate(ref_ptr(mol%nat + 1))
       call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp)

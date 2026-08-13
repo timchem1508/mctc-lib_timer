@@ -47,6 +47,7 @@ tests = [
   'write-xyz',
   'timer',
   'csrlist',
+  'wignerseitz',
 ]
 
 test_srcs = files(
