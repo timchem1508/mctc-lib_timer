@@ -16,6 +16,7 @@ module test_csrlist
    use iso_fortran_env, only : int64
    use mctc_env, only : wp, timer_type, format_time
    use mctc_io_resize, only : resize
+   use mctc_wignerseitz, only : wignerseitz_cell, new_wignerseitz_cell
    use mctc_io_structure, only: structure_type, new
    use mctc_cutoff, only: get_lattice_points
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, &
@@ -68,6 +69,8 @@ contains
       & new_unittest("csr-vs-verlet-feo2-complete", test_list_feo2_complete), &
       & new_unittest("csr-vs-verlet-x04-complete", test_list_x04_complete), &
       & new_unittest("csr-vs-verlet-x05-complete", test_list_x05_complete), &
+      & new_unittest("nacl-wsc", test_nacl_wsc), &
+      & new_unittest("feo2-wsc", test_feo2_wsc), &
       & new_unittest("spmv-mchrg", test_spmv_mcharge), &
       & new_unittest("spmv-standard-csr", test_spmv_csr), &
       & new_unittest("spmv-standard-csr-complete-list", test_spmv_csr_complete), &
@@ -350,6 +353,62 @@ contains
       end do
 
    end subroutine test_pbc_list_gen
+
+   subroutine test_wsc(error, mol, cutoff, cmp, ref_list, ref_nimg)
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+      !> Molecular structure data
+      type(structure_type), intent(in) :: mol
+      !> Cutoff radius
+      real(wp), intent(in) :: cutoff
+      !> Whether a complete or a symmetrical reduced map should be generated
+      logical, intent(in) :: cmp
+      !> Reference neighbour list
+      integer, intent(in) :: ref_list(:)
+      !> Reference array of the number of translation images
+      integer, intent(in) :: ref_nimg(:)
+
+      type(csr_list), allocatable :: list
+      type(wignerseitz_cell), allocatable :: wsc
+      integer :: iat, jat, kat, ntr, itr, tridx
+      real(wp) :: vec(3)
+
+      allocate(list)
+      allocate(wsc)
+      call new_csr_list(list, mol, wsc, cutoff=cutoff, complete=cmp)
+
+      do iat = 1, mol%nat
+         do kat = list%inl(iat), list%inl(iat+1) - 1
+            jat = list%nlat(kat)
+            ntr = list%wsc%nimg_list(kat)
+            if (.not. any(jat == ref_list(list%inl(iat): list%inl(iat+1) - 1))) then
+               call test_failed(error, "Neighbour list array does not match reference.")
+               print'(20a)', "Generated list:"
+               print'(10i6)', list%nlat
+               print'(20a)', "Reference list:"
+               print'(10i6)', ref_list
+               exit
+            end if
+            if (.not. ntr == ref_nimg(kat)) then
+               call test_failed(error, "Neighbour list WSC translations number array does not match reference.")
+               print'(20a)', "Generated translations:"
+               print'(10i6)', list%wsc%nimg_list
+               print'(20a)', "Reference translations:"
+               print'(10i6)', ref_nimg
+               exit
+            end if
+            do itr = list%wsc%itr_list(kat), list%wsc%itr_list(kat+1) - 1
+               tridx = list%wsc%tridx_list(itr)
+               vec = mol%xyz(:, jat) - mol%xyz(:, iat) + list%wsc%trans(:, list%wsc%tridx_list(itr))
+               if (sum(vec**2) >= cutoff**2) then
+                  call test_failed(error, "The pair in the neighbour list is outside the cutoff radius.")
+                  exit
+               end if
+            end do
+         end do
+      end do
+
+   end subroutine test_wsc
 
 
    subroutine test_grid_water(error)
@@ -865,6 +924,41 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_x05_complete
+
+   subroutine test_nacl_wsc(error)
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 29.0_wp
+      ! Reference neighbour list
+      integer, parameter :: ref_list(3) = [1, 2, 2]
+      ! Reference array of the number of translation images
+      integer, parameter  :: ref_nimg(3) = [12, 6, 12]
+
+
+      call get_structure(mol, "nacl")
+      call test_wsc(error, mol, cutoff, .false., ref_list, ref_nimg)
+
+   end subroutine test_nacl_wsc
+
+   subroutine test_feo2_wsc(error)
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 29.0_wp
+
+      ! Reference neighbour list
+      integer, parameter :: ref_list(6) = [1, 3, 2, 2, 3, 3]
+      ! Reference array of the number of translation images
+      integer, parameter  :: ref_nimg(6) = [6, 3, 3, 6, 3, 6]
+
+      call get_structure(mol, "feo2")
+      call test_wsc(error, mol, cutoff, .false., ref_list, ref_nimg)
+
+
+   end subroutine test_feo2_wsc
 
    subroutine test_spmv_mcharge(error)
 

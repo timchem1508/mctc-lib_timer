@@ -227,8 +227,8 @@ contains
       allocate(atrack(mol%nat), source=0)
       allocate(thr_inl(mol%nat), source=0)
 
-      thr_mem = max(init_size * mol%nat, &
-      & int(real((prob * mol%nat), wp) / real(nthr, wp), int64) * size(self%trans, 2))
+      thr_mem = max(init_size * mol%nat * size(self%trans, 2), &
+      & int(real((prob * mol%nat), wp) / real(nthr, wp), int64))
       allocate(thr_nlat(thr_mem, nthr))
       if (any(mol%periodic)) allocate(thr_nltr(thr_mem, nthr))
 
@@ -493,7 +493,7 @@ contains
       if (self%complete) prob = prob * 2
 
       thr_mem = max(init_size * mol%nat, &
-      & int(real((prob * mol%nat), wp) / real(nthr, wp), int64) * size(self%trans, 2))
+      & int(real((prob * mol%nat), wp) / real(nthr, wp), int64))
       thr_maxtr = thr_mem * 6
 
       ! Allocate thread metrics
@@ -525,9 +525,9 @@ contains
          ! A. Search for diagonal periodic self-interactions
          call get_wsc_pairs(trans, zero_vec, nimg_count, tridx_arr, r2_min)
          if (nimg_count > 0 .and. r2_min <= cutoff2) then
-            total_self_nimg = 1 + nimg_count
+            total_self_nimg = nimg_count
          else
-            total_self_nimg = 1
+            total_self_nimg = 0
          end if
 
          thr_img(tid) = thr_img(tid) + 1
@@ -539,11 +539,10 @@ contains
          thr_nimg(thr_img(tid), tid) = total_self_nimg
          thr_itr(thr_img(tid), tid) = thr_trptr(tid) + 1
          thr_nimg_max(tid) = max(thr_nimg_max(tid), total_self_nimg)
-         thr_tridx(thr_trptr(tid) + 1, tid) = 1
 
          ! Append remaining periodic self-images if present
          if (total_self_nimg > 1) then
-            thr_tridx(thr_trptr(tid) + 2 : thr_trptr(tid) + total_self_nimg, tid) = tridx_arr(1:nimg_count)
+            thr_tridx(thr_trptr(tid) + 1 : thr_trptr(tid) + total_self_nimg, tid) = tridx_arr(1:nimg_count)
          end if
 
          thr_trptr(tid) = thr_trptr(tid) + total_self_nimg
