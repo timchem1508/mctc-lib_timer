@@ -13,7 +13,7 @@
 ! limitations under the License.
 
 !> @file mctc/csrlist/linal.f90
-!> Matrix-vector and Matrix-matrix routines for CSR compressed matrices.
+!> Matrix-vector routines for CSR compressed matrices.
 module mctc_csrlist_linal
    use mctc_env, only : wp
    use mctc_csrlist_type, only: csr_list
