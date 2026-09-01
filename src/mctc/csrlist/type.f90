@@ -154,7 +154,7 @@ contains
       integer :: ix, iy, iz, jx, jy, jz, di, dj, dk, d
       integer, allocatable :: head(:), nxt(:)
       integer :: n_xyz(3)
-      real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3), max_xyz(3)
+      real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3)
       real(wp) :: vol, dens, det, lat_inv(3, 3), fract(3)
       integer(int64) :: prob
       integer, allocatable :: ccount(:)
@@ -713,8 +713,8 @@ contains
       !> Width of each grid cell
       real(wp), intent(out), optional :: cell_w(3)
 
-      real(wp) :: L_vec, H(3), cross_ij(3), lattice(3, 3)
-      real(wp) :: dot_12, dot_23, dot_31, max_xyz(3), min_xyz(3)
+      real(wp) :: H(3), cross_ij(3), lattice(3, 3)
+      real(wp) :: max_xyz(3), min_xyz(3)
       integer  :: i
 
       if (any(mol%periodic)) then
