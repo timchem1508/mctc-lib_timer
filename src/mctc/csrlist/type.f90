@@ -59,6 +59,18 @@ module mctc_csrlist_type
 
    public :: csr_list, new_csr_list, compute_grid, get_linked_cell
 
+   !> Universal thread-local dynamic storage buffer for neighbourlist construction
+   type :: thread_buf_type
+      integer(int64) :: capacity = 0_int64
+      integer(int64) :: cap_tr   = 0_int64
+
+      integer, allocatable :: nlat(:)
+      integer, allocatable :: nltr(:)
+      integer, allocatable :: nimg(:)
+      integer, allocatable :: itr(:)
+      integer, allocatable :: tridx(:)
+   end type thread_buf_type
+
    !> @class csr_list
    !> Neighbourlist in CSR format
    type :: csr_list
@@ -80,7 +92,7 @@ module mctc_csrlist_type
       type(wignerseitz_cell), allocatable :: wsc
    end type csr_list
 
-   ! Default input
+   ! Default parameters
    real(wp), parameter :: cutoff_def = 29.0_wp
    real(wp), parameter :: trans_def(3, 1) = 0.0_wp
    logical, parameter :: complete_def = .false.
@@ -141,7 +153,50 @@ contains
 
    end subroutine new_csr_list
 
-!> Generator of the CSR-based Hybrid Neighbour List
+   !> Dynamic expansion routine for pair-indexed arrays
+   subroutine grow_buffer(buf)
+      type(thread_buf_type), intent(inout) :: buf
+      integer(int64) :: new_capacity
+
+      if (buf%capacity <= 0) then
+         new_capacity = 1024_int64
+      else
+         new_capacity = buf%capacity * 2_int64
+      end if
+
+      if (allocated(buf%nlat)) call resize(buf%nlat, int(new_capacity))
+      if (allocated(buf%nltr)) call resize(buf%nltr, int(new_capacity))
+      if (allocated(buf%nimg)) call resize(buf%nimg, int(new_capacity))
+      if (allocated(buf%itr))  call resize(buf%itr,  int(new_capacity))
+
+      buf%capacity = new_capacity
+   end subroutine grow_buffer
+
+   !> Dynamic expansion routine for translation index array
+   subroutine grow_buffer_tr(buf, min_needed)
+      type(thread_buf_type), intent(inout) :: buf
+      integer, intent(in) :: min_needed
+      integer(int64) :: new_capacity
+
+      new_capacity = max(buf%cap_tr + int(min_needed, int64), buf%cap_tr * 2_int64)
+      if (allocated(buf%tridx)) call resize(buf%tridx, int(new_capacity))
+      buf%cap_tr = new_capacity
+   end subroutine grow_buffer_tr
+
+   !> Deallocation helper for universal thread buffer
+   subroutine deallocate_thread_buf(buf)
+      type(thread_buf_type), intent(inout) :: buf
+
+      if (allocated(buf%nlat))  deallocate(buf%nlat)
+      if (allocated(buf%nltr))  deallocate(buf%nltr)
+      if (allocated(buf%nimg))  deallocate(buf%nimg)
+      if (allocated(buf%itr))   deallocate(buf%itr)
+      if (allocated(buf%tridx)) deallocate(buf%tridx)
+      buf%capacity = 0_int64
+      buf%cap_tr   = 0_int64
+   end subroutine deallocate_thread_buf
+
+   !> Generator of the CSR-based Hybrid Neighbour List
    subroutine generate_hybrid(self, mol)
       use omp_lib
 
@@ -161,6 +216,7 @@ contains
 
       ! Dynamic stencil search bounds per dimension
       integer :: kmin(3), kmax(3)
+      integer :: di_min, di_max, dj_min, dj_max, dk_min, dk_max
 
       ! Statistical estimation variables
       integer :: nz_count, median
@@ -172,8 +228,7 @@ contains
       integer, allocatable :: thr_img(:)
       integer, allocatable :: thr_inl(:)
       integer, allocatable :: atrack(:)
-      integer, allocatable :: thr_nlat(:,:)
-      integer, allocatable :: thr_nltr(:,:)
+      type(thread_buf_type), allocatable :: thr_buf(:)
 
       img = 0
       cutoff2 = self%cutoff**2
@@ -184,6 +239,7 @@ contains
       else
          call compute_grid(mol, self%cutoff, det, n_xyz, cell_w=cell_w)
       end if
+
       ! Dynamic Stencil bounds prevent duplicate cell visits when grid dimensions (N_xyz) are < 3
       do d = 1, 3
          select case (n_xyz(d))
@@ -207,7 +263,7 @@ contains
          call get_linked_cell(mol, n_xyz, head, nxt, ccount, cell_w=cell_w)
       end if
 
-      ! 3. Perform basic statistical analysis to estimate the `nlat` size
+      ! 3. Perform basic statistical analysis to estimate initial buffer size
       nz_count = count(ccount > 0)
       call get_median(ccount, median)
 
@@ -216,7 +272,7 @@ contains
       prob = ceiling(dens * self%cutoff**3.0_wp * 4.0_wp)
       if (self%complete) prob = prob * 2
 
-      ! 4. OpenMP Setup
+      ! 4. OpenMP Setup & Allocation
       !$omp parallel
       !$omp master
       nthr = omp_get_num_threads()
@@ -227,10 +283,16 @@ contains
       allocate(atrack(mol%nat), source=0)
       allocate(thr_inl(mol%nat), source=0)
 
-      thr_mem = max(init_size * mol%nat * size(self%trans, 2), &
+      thr_mem = max(int(init_size * mol%nat * size(self%trans, 2) * vol / (self%cutoff**3.0_wp * 4.0_wp), int64), &
       & int(real((prob * mol%nat), wp) / real(nthr, wp), int64))
-      allocate(thr_nlat(thr_mem, nthr))
-      if (any(mol%periodic)) allocate(thr_nltr(thr_mem, nthr))
+      thr_mem = max(100_int64, thr_mem)
+
+      allocate(thr_buf(nthr))
+      do tid = 1, nthr
+         thr_buf(tid)%capacity = thr_mem
+         allocate(thr_buf(tid)%nlat(thr_buf(tid)%capacity))
+         if (any(mol%periodic)) allocate(thr_buf(tid)%nltr(thr_buf(tid)%capacity))
+      end do
 
       ! 5. Search Loop
       if (any(mol%periodic)) then
@@ -240,8 +302,8 @@ contains
          !$omp private(iat, tid, ix, iy, iz, dk, dj, di, fract) &
          !$omp private(jx, jy, jz, jc, jat, itr, vec, r2) &
          !$omp shared(mol, self, head, nxt, thr_img, thr_inl) &
-         !$omp shared(thr_nlat, thr_nltr, cell_w, lat_inv, min_xyz) &
-         !$omp shared(n_xyz, kmin, kmax, cutoff2, atrack, thr_mem)
+         !$omp shared(thr_buf, cell_w, lat_inv, min_xyz) &
+         !$omp shared(n_xyz, kmin, kmax, cutoff2, atrack)
          do iat = 1, mol%nat
             tid = omp_get_thread_num() + 1
             atrack(iat) = tid
@@ -249,9 +311,9 @@ contains
 
             ! Inject Diagonal (self-interaction) at position 1
             thr_img(tid) = thr_img(tid) + 1
-            if (thr_img(tid) > thr_mem) error stop "CSR list size overflow!"
-            thr_nlat(thr_img(tid), tid) = iat
-            thr_nltr(thr_img(tid), tid) = 1
+            if (thr_img(tid) > thr_buf(tid)%capacity) call grow_buffer(thr_buf(tid))
+            thr_buf(tid)%nlat(thr_img(tid)) = iat
+            thr_buf(tid)%nltr(thr_img(tid)) = 1
 
             fract(:) = matmul(lat_inv, mol%xyz(:, iat))
             fract(:) = fract(:) - floor(fract(:))
@@ -275,7 +337,7 @@ contains
                         ! Upper triangle condition: skip lower triangle if incomplete
                         if (self%complete .or. jat >= iat) then
                            do itr = 1, size(self%trans, 2)
-                              ! Skip diagonal element identity shift (already injected at start of row)
+                              ! Skip diagonal element identity shift
                               if (iat == jat .and. itr == 1) cycle
 
                               vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - self%trans(:, itr)
@@ -284,10 +346,10 @@ contains
                               if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
 
                               thr_img(tid) = thr_img(tid) + 1
-                              if (thr_img(tid) > thr_mem) error stop "CSR list size overflow!"
+                              if (thr_img(tid) > thr_buf(tid)%capacity) call grow_buffer(thr_buf(tid))
 
-                              thr_nlat(thr_img(tid), tid) = jat
-                              thr_nltr(thr_img(tid), tid) = itr
+                              thr_buf(tid)%nlat(thr_img(tid)) = jat
+                              thr_buf(tid)%nltr(thr_img(tid)) = itr
                            end do
                         end if
                         jat = nxt(jat)
@@ -296,21 +358,20 @@ contains
                end do
             end do
 
-            ! Temporarily store neighbor count for atom iat at position (iat + 1)
             self%inl(iat + 1) = thr_img(tid) - thr_inl(iat)
          end do
          !$omp end parallel do
 
       else
-         ! Non-periodic Branch
+         ! Non-periodic (Molecular) Branch
          min_xyz = minval(mol%xyz, dim=2) - buffer
 
          !$omp parallel do schedule(guided) &
-         !$omp private(iat, tid, ix, iy, iz, dk, dj, di) &
-         !$omp private(jx, jy, jz, jc, jat, vec, r2) &
+         !$omp private(iat, tid, ix, iy, iz, dk, dj, di, jx, jy, jz, jc, jat, vec, r2) &
+         !$omp private(di_min, di_max, dj_min, dj_max, dk_min, dk_max) &
          !$omp shared(mol, self, head, nxt, thr_img, thr_inl) &
-         !$omp shared(thr_nlat, cell_w, min_xyz, n_xyz, cutoff2) &
-         !$omp shared(atrack, thr_mem, kmin, kmax)
+         !$omp shared(thr_buf, cell_w, min_xyz, n_xyz, cutoff2) &
+         !$omp shared(atrack, kmin, kmax)
          do iat = 1, mol%nat
             tid = omp_get_thread_num() + 1
             atrack(iat) = tid
@@ -318,41 +379,44 @@ contains
 
             ! Inject Diagonal (self-interaction) at position 1
             thr_img(tid) = thr_img(tid) + 1
-            if (thr_img(tid) > thr_mem) error stop "CSR list size overflow!"
-            thr_nlat(thr_img(tid), tid) = iat
+            if (thr_img(tid) > thr_buf(tid)%capacity) call grow_buffer(thr_buf(tid))
+            thr_buf(tid)%nlat(thr_img(tid)) = iat
 
             ix = min(n_xyz(1), max(1, int((mol%xyz(1, iat) - min_xyz(1)) / cell_w(1)) + 1))
             iy = min(n_xyz(2), max(1, int((mol%xyz(2, iat) - min_xyz(2)) / cell_w(2)) + 1))
             iz = min(n_xyz(3), max(1, int((mol%xyz(3, iat) - min_xyz(3)) / cell_w(3)) + 1))
 
-            do dk = kmin(3), kmax(3); do dj = kmin(2), kmax(2); do di = kmin(1), kmax(1)
-                     jx = ix + di; jy = iy + dj; jz = iz + dk
+            ! Dynamic molecular stencil bounds clamped to physical cell grid limits [1, n_xyz]
+            di_min = max(kmin(1), 1 - ix); di_max = min(kmax(1), n_xyz(1) - ix)
+            dj_min = max(kmin(2), 1 - iy); dj_max = min(kmax(2), n_xyz(2) - iy)
+            dk_min = max(kmin(3), 1 - iz); dk_max = min(kmax(3), n_xyz(3) - iz)
 
-                     if (jx < 1 .or. jx > n_xyz(1) .or. &
-                        jy < 1 .or. jy > n_xyz(2) .or. &
-                        jz < 1 .or. jz > n_xyz(3)) cycle
-
+            do dk = dk_min, dk_max
+               jz = iz + dk
+               do dj = dj_min, dj_max
+                  jy = iy + dj
+                  do di = di_min, di_max
+                     jx = ix + di
                      jc = jx + n_xyz(1)*(jy-1) + n_xyz(1)*n_xyz(2)*(jz-1)
                      jat = head(jc)
 
                      do while (jat > 0)
-                        ! Skip lower triangle if incomplete
-                        if ( self%complete .or. jat > iat) then
+                        if (self%complete .or. jat > iat) then
                            vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
                            r2 = sum(vec**2)
 
-                           if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) then
-                              jat = nxt(jat); cycle
+                           if (r2 >= epsilon(cutoff2) .and. r2 <= cutoff2) then
+                              thr_img(tid) = thr_img(tid) + 1
+                              if (thr_img(tid) > thr_buf(tid)%capacity) call grow_buffer(thr_buf(tid))
+
+                              thr_buf(tid)%nlat(thr_img(tid)) = jat
                            end if
-
-                           thr_img(tid) = thr_img(tid) + 1
-                           if (thr_img(tid) > thr_mem) error stop "CSR list size overflow!"
-
-                           thr_nlat(thr_img(tid), tid) = jat
                         end if
                         jat = nxt(jat)
                      end do
-                  end do; end do; end do
+                  end do
+               end do
+            end do
             self%inl(iat + 1) = thr_img(tid) - thr_inl(iat)
          end do
          !$omp end parallel do
@@ -370,7 +434,7 @@ contains
       if (any(mol%periodic)) call resize(self%nltr, img)
 
       !$omp parallel do schedule(static) private(iat, tid, start_idx, local_offset, n_neigh) &
-      !$omp shared(mol, self, atrack, thr_inl, thr_nlat, thr_nltr)
+      !$omp shared(mol, self, atrack, thr_inl, thr_buf)
       do iat = 1, mol%nat
          tid = atrack(iat)
          start_idx = self%inl(iat)
@@ -379,11 +443,11 @@ contains
 
          if (n_neigh > 0) then
             self%nlat(start_idx : start_idx + n_neigh - 1) = &
-               thr_nlat(local_offset + 1 : local_offset + n_neigh, tid)
+               thr_buf(tid)%nlat(local_offset + 1 : local_offset + n_neigh)
 
             if (any(mol%periodic)) then
                self%nltr(start_idx : start_idx + n_neigh - 1) = &
-                  thr_nltr(local_offset + 1 : local_offset + n_neigh, tid)
+                  thr_buf(tid)%nltr(local_offset + 1 : local_offset + n_neigh)
             end if
          end if
       end do
@@ -391,8 +455,14 @@ contains
 
       if (allocated(head)) deallocate(head)
       if (allocated(nxt)) deallocate(nxt)
-      deallocate(thr_img, atrack, thr_inl, thr_nlat, ccount)
-      if (allocated(thr_nltr)) deallocate(thr_nltr)
+      deallocate(thr_img, atrack, thr_inl, ccount)
+
+      if (allocated(thr_buf)) then
+         do tid = 1, nthr
+            call deallocate_thread_buf(thr_buf(tid))
+         end do
+         deallocate(thr_buf)
+      end if
 
    end subroutine generate_hybrid
 
@@ -432,9 +502,8 @@ contains
       integer, allocatable :: thr_start(:), thr_trstart(:)
       integer, allocatable :: thr_nimg_max(:)
 
-      ! Thread-local storage buffers
-      integer, allocatable :: thr_nlat(:,:), thr_nimg(:,:), thr_itr(:,:)
-      integer, allocatable :: thr_tridx(:,:)
+      ! Thread-local storage buffer
+      type(thread_buf_type), allocatable :: thr_buf(:)
 
       ! Loop-private search variables for OMP
       integer :: nimg_count
@@ -501,11 +570,16 @@ contains
       allocate(thr_trptr(nthr), source=0)
       allocate(thr_nimg_max(nthr), source=0)
 
-      ! Allocate Thread-local buffers
-      allocate(thr_nlat(thr_mem, nthr))
-      allocate(thr_nimg(thr_mem, nthr))
-      allocate(thr_itr(thr_mem, nthr))
-      allocate(thr_tridx(thr_maxtr, nthr))
+      ! Allocate Thread-local buffers via thr_buf
+      allocate(thr_buf(nthr))
+      do tid = 1, nthr
+         thr_buf(tid)%capacity = thr_mem
+         thr_buf(tid)%cap_tr   = thr_maxtr
+         allocate(thr_buf(tid)%nlat(thr_buf(tid)%capacity))
+         allocate(thr_buf(tid)%nimg(thr_buf(tid)%capacity))
+         allocate(thr_buf(tid)%itr(thr_buf(tid)%capacity))
+         allocate(thr_buf(tid)%tridx(thr_buf(tid)%cap_tr))
+      end do
 
       ! Pre-allocate CSR row pointer array (size = nat + 1)
       if (allocated(self%inl)) deallocate(self%inl)
@@ -515,8 +589,7 @@ contains
       !$omp parallel do schedule(static) &
       !$omp private(iat, tid, start_count, fract, ix, iy, iz, dk, dj, &
       !$omp        di, jx, jy, jz, jc, jat, vec, nimg_count, tridx_arr, r2_min, total_self_nimg) &
-      !$omp shared(mol, self, head, nxt, thr_img, thr_trptr, &
-      !$omp        thr_nlat, thr_nimg, thr_itr, thr_tridx, thr_nimg_max, &
+      !$omp shared(mol, self, head, nxt, thr_img, thr_trptr, thr_buf, thr_nimg_max, &
       !$omp        trans, zero_vec, cutoff2, n_xyz, lat_inv, kmin, kmax, thr_mem, thr_maxtr)
       do iat = 1, mol%nat
          tid = omp_get_thread_num() + 1
@@ -531,18 +604,21 @@ contains
          end if
 
          thr_img(tid) = thr_img(tid) + 1
-         if (thr_img(tid) > thr_mem) error stop "CSR list size overflow!"
-         if (thr_trptr(tid) + total_self_nimg > thr_maxtr) error stop "Translation index list overflow"
+
+         ! Dynamic checks and buffer expansion
+         if (thr_img(tid) > thr_buf(tid)%capacity) call grow_buffer(thr_buf(tid))
+         if (thr_trptr(tid) + total_self_nimg > thr_buf(tid)%cap_tr) &
+            call grow_buffer_tr(thr_buf(tid), total_self_nimg)
 
          ! Insert diagonal element at first position of current row
-         thr_nlat(thr_img(tid), tid) = iat
-         thr_nimg(thr_img(tid), tid) = total_self_nimg
-         thr_itr(thr_img(tid), tid) = thr_trptr(tid) + 1
+         thr_buf(tid)%nlat(thr_img(tid)) = iat
+         thr_buf(tid)%nimg(thr_img(tid)) = total_self_nimg
+         thr_buf(tid)%itr(thr_img(tid))  = thr_trptr(tid) + 1
          thr_nimg_max(tid) = max(thr_nimg_max(tid), total_self_nimg)
 
          ! Append remaining periodic self-images if present
          if (total_self_nimg > 1) then
-            thr_tridx(thr_trptr(tid) + 1 : thr_trptr(tid) + total_self_nimg, tid) = tridx_arr(1:nimg_count)
+            thr_buf(tid)%tridx(thr_trptr(tid) + 1 : thr_trptr(tid) + total_self_nimg) = tridx_arr(1:nimg_count)
          end if
 
          thr_trptr(tid) = thr_trptr(tid) + total_self_nimg
@@ -576,15 +652,18 @@ contains
                         if (nimg_count > 0 .and. r2_min <= cutoff2) then
                            thr_img(tid) = thr_img(tid) + 1
 
-                           if (thr_img(tid) > thr_mem) error stop "CSR list size overflow"
-                           if (thr_trptr(tid) + nimg_count > thr_maxtr) error stop "Translation index list overflow"
+                           ! Dynamic checks and buffer expansion
+                           if (thr_img(tid) > thr_buf(tid)%capacity) call grow_buffer(thr_buf(tid))
+                           if (thr_trptr(tid) + nimg_count > thr_buf(tid)%cap_tr) &
+                              call grow_buffer_tr(thr_buf(tid), nimg_count)
 
-                           thr_nlat(thr_img(tid), tid) = jat
-                           thr_nimg(thr_img(tid), tid) = nimg_count
-                           thr_itr(thr_img(tid), tid) = thr_trptr(tid) + 1
+                           thr_buf(tid)%nlat(thr_img(tid)) = jat
+                           thr_buf(tid)%nimg(thr_img(tid)) = nimg_count
+                           thr_buf(tid)%itr(thr_img(tid))  = thr_trptr(tid) + 1
                            thr_nimg_max(tid) = max(thr_nimg_max(tid), nimg_count)
 
-                           thr_tridx(thr_trptr(tid) + 1 : thr_trptr(tid) + nimg_count, tid) = tridx_arr(1:nimg_count)
+                           thr_buf(tid)%tridx(thr_trptr(tid) + 1 : thr_trptr(tid) + nimg_count) = &
+                              tridx_arr(1:nimg_count)
                            thr_trptr(tid) = thr_trptr(tid) + nimg_count
                         end if
                      end if
@@ -628,21 +707,21 @@ contains
       call resize(wsc%tridx_list, trptr)
 
       !$omp parallel private(tid, t_start, t_size, t_tr_start) &
-      !$omp shared(self, wsc, thr_start, thr_trstart, thr_img, thr_trptr, &
-      !$omp        thr_nlat, thr_nimg, thr_itr, thr_tridx)
+      !$omp shared(self, wsc, thr_start, thr_trstart, thr_img, thr_trptr, thr_buf)
       tid = omp_get_thread_num() + 1
       t_start = thr_start(tid)
       t_size = thr_img(tid)
       t_tr_start = thr_trstart(tid)
 
       if (t_size > 0) then
-         self%nlat(t_start + 1 : t_start + t_size) = thr_nlat(1 : t_size, tid)
-         wsc%nimg_list(t_start + 1 : t_start + t_size) = thr_nimg(1 : t_size, tid)
-         wsc%itr_list(t_start + 1 : t_start + t_size) = thr_itr(1 : t_size, tid) + t_tr_start
+         self%nlat(t_start + 1 : t_start + t_size) = thr_buf(tid)%nlat(1 : t_size)
+         wsc%nimg_list(t_start + 1 : t_start + t_size) = thr_buf(tid)%nimg(1 : t_size)
+         wsc%itr_list(t_start + 1 : t_start + t_size) = thr_buf(tid)%itr(1 : t_size) + t_tr_start
       end if
 
       if (thr_trptr(tid) > 0) then
-         wsc%tridx_list(t_tr_start + 1 : t_tr_start + thr_trptr(tid)) = thr_tridx(1 : thr_trptr(tid), tid)
+         wsc%tridx_list(t_tr_start + 1 : t_tr_start + thr_trptr(tid)) = &
+            thr_buf(tid)%tridx(1 : thr_trptr(tid))
       end if
       !$omp end parallel
       wsc%itr_list(img + 1) = trptr + 1
@@ -651,7 +730,13 @@ contains
       deallocate(thr_img, thr_trptr)
       deallocate(thr_start, thr_trstart)
       deallocate(thr_nimg_max)
-      deallocate(thr_nlat, thr_nimg, thr_itr, thr_tridx)
+
+      if (allocated(thr_buf)) then
+         do tid = 1, nthr
+            call deallocate_thread_buf(thr_buf(tid))
+         end do
+         deallocate(thr_buf)
+      end if
 
    end subroutine generate_wsc
 
