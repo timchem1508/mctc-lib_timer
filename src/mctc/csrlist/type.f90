@@ -283,7 +283,7 @@ contains
       allocate(atrack(mol%nat), source=0)
       allocate(thr_inl(mol%nat), source=0)
 
-      thr_mem = max(int(init_size * mol%nat * size(self%trans, 2) * vol / (self%cutoff**3.0_wp * 4.0_wp), int64), &
+      thr_mem = max(int(init_size * mol%nat * size(self%trans, 2), int64), &
       & int(real((prob * mol%nat), wp) / real(nthr, wp), int64))
       thr_mem = max(100_int64, thr_mem)
 
