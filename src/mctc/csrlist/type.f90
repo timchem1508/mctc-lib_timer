@@ -183,20 +183,7 @@ contains
       buf%cap_tr = new_capacity
    end subroutine grow_buffer_tr
 
-   !> Deallocation helper for universal thread buffer
-   subroutine deallocate_thread_buf(buf)
-      type(thread_buf_type), intent(inout) :: buf
-
-      if (allocated(buf%nlat))  deallocate(buf%nlat)
-      if (allocated(buf%nltr))  deallocate(buf%nltr)
-      if (allocated(buf%nimg))  deallocate(buf%nimg)
-      if (allocated(buf%itr))   deallocate(buf%itr)
-      if (allocated(buf%tridx)) deallocate(buf%tridx)
-      buf%capacity = 0_int64
-      buf%cap_tr   = 0_int64
-   end subroutine deallocate_thread_buf
-
-   !> Generator of the CSR-based Hybrid Neighbour List
+!> Generator of the CSR-based Hybrid Neighbour List
    subroutine generate_hybrid(self, mol)
       use omp_lib
 
@@ -223,11 +210,9 @@ contains
 
       ! OpenMP specific variables
       integer(int64) :: thr_mem
-      integer :: nthr, tid
-      integer :: start_idx, local_offset, n_neigh
+      integer :: nthr, tid, start_count, thr_size
       integer, allocatable :: thr_img(:)
-      integer, allocatable :: thr_inl(:)
-      integer, allocatable :: atrack(:)
+      integer, allocatable :: thr_start(:)
       type(thread_buf_type), allocatable :: thr_buf(:)
 
       img = 0
@@ -280,10 +265,8 @@ contains
       !$omp end parallel
 
       allocate(thr_img(nthr), source=0)
-      allocate(atrack(mol%nat), source=0)
-      allocate(thr_inl(mol%nat), source=0)
 
-      thr_mem = max(int(init_size * mol%nat * size(self%trans, 2), int64), &
+      thr_mem = max(int(init_size * mol%nat, int64), &
       & int(real((prob * mol%nat), wp) / real(nthr, wp), int64))
       thr_mem = max(100_int64, thr_mem)
 
@@ -294,20 +277,22 @@ contains
          if (any(mol%periodic)) allocate(thr_buf(tid)%nltr(thr_buf(tid)%capacity))
       end do
 
+      if (allocated(self%inl)) deallocate(self%inl)
+      allocate(self%inl(mol%nat + 1), source=0)
+
       ! 5. Search Loop
       if (any(mol%periodic)) then
          ! Periodic Branch
 
-         !$omp parallel do schedule(guided) &
-         !$omp private(iat, tid, ix, iy, iz, dk, dj, di, fract) &
+         !$omp parallel do schedule(static) &
+         !$omp private(iat, tid, start_count, ix, iy, iz, dk, dj, di, fract) &
          !$omp private(jx, jy, jz, jc, jat, itr, vec, r2) &
-         !$omp shared(mol, self, head, nxt, thr_img, thr_inl) &
+         !$omp shared(mol, self, head, nxt, thr_img) &
          !$omp shared(thr_buf, cell_w, lat_inv, min_xyz) &
-         !$omp shared(n_xyz, kmin, kmax, cutoff2, atrack)
+         !$omp shared(n_xyz, kmin, kmax, cutoff2)
          do iat = 1, mol%nat
             tid = omp_get_thread_num() + 1
-            atrack(iat) = tid
-            thr_inl(iat) = thr_img(tid)
+            start_count = thr_img(tid)
 
             ! Inject Diagonal (self-interaction) at position 1
             thr_img(tid) = thr_img(tid) + 1
@@ -358,7 +343,7 @@ contains
                end do
             end do
 
-            self%inl(iat + 1) = thr_img(tid) - thr_inl(iat)
+            self%inl(iat + 1) = thr_img(tid) - start_count
          end do
          !$omp end parallel do
 
@@ -366,16 +351,15 @@ contains
          ! Non-periodic (Molecular) Branch
          min_xyz = minval(mol%xyz, dim=2) - buffer
 
-         !$omp parallel do schedule(guided) &
-         !$omp private(iat, tid, ix, iy, iz, dk, dj, di, jx, jy, jz, jc, jat, vec, r2) &
+         !$omp parallel do schedule(static) &
+         !$omp private(iat, tid, start_count, ix, iy, iz, dk, dj, di, jx, jy, jz, jc, jat, vec, r2) &
          !$omp private(di_min, di_max, dj_min, dj_max, dk_min, dk_max) &
-         !$omp shared(mol, self, head, nxt, thr_img, thr_inl) &
+         !$omp shared(mol, self, head, nxt, thr_img) &
          !$omp shared(thr_buf, cell_w, min_xyz, n_xyz, cutoff2) &
-         !$omp shared(atrack, kmin, kmax)
+         !$omp shared(kmin, kmax)
          do iat = 1, mol%nat
             tid = omp_get_thread_num() + 1
-            atrack(iat) = tid
-            thr_inl(iat) = thr_img(tid)
+            start_count = thr_img(tid)
 
             ! Inject Diagonal (self-interaction) at position 1
             thr_img(tid) = thr_img(tid) + 1
@@ -417,52 +401,45 @@ contains
                   end do
                end do
             end do
-            self%inl(iat + 1) = thr_img(tid) - thr_inl(iat)
+            self%inl(iat + 1) = thr_img(tid) - start_count
          end do
          !$omp end parallel do
       end if
 
-      ! 6. CSR Pointer array construction
+      ! 6. The Stitching Phase
+      allocate(thr_start(nthr), source=0)
+      thr_start(1) = 0
+      do tid = 2, nthr
+         thr_start(tid) = thr_start(tid-1) + thr_img(tid-1)
+      end do
+
+      img = thr_start(nthr) + thr_img(nthr)
+
+      ! CSR Pointer array construction
       self%inl(1) = 1
       do iat = 1, mol%nat
          self%inl(iat + 1) = self%inl(iat) + self%inl(iat + 1)
       end do
-      img = self%inl(mol%nat + 1) - 1
 
       ! 7. CSR List Resizing & Stream Copying
       call resize(self%nlat, img)
       if (any(mol%periodic)) call resize(self%nltr, img)
 
-      !$omp parallel do schedule(static) private(iat, tid, start_idx, local_offset, n_neigh) &
-      !$omp shared(mol, self, atrack, thr_inl, thr_buf)
-      do iat = 1, mol%nat
-         tid = atrack(iat)
-         start_idx = self%inl(iat)
-         local_offset = thr_inl(iat)
-         n_neigh = self%inl(iat + 1) - self%inl(iat)
+      !$omp parallel private(tid, thr_size) &
+      !$omp shared(self, thr_start, thr_img, thr_buf)
+      tid = omp_get_thread_num() + 1
+      thr_size = thr_img(tid)
 
-         if (n_neigh > 0) then
-            self%nlat(start_idx : start_idx + n_neigh - 1) = &
-               thr_buf(tid)%nlat(local_offset + 1 : local_offset + n_neigh)
-
-            if (any(mol%periodic)) then
-               self%nltr(start_idx : start_idx + n_neigh - 1) = &
-                  thr_buf(tid)%nltr(local_offset + 1 : local_offset + n_neigh)
-            end if
+      if (thr_size > 0) then
+         self%nlat(thr_start(tid) + 1 : thr_start(tid) + thr_size) = thr_buf(tid)%nlat(1 : thr_size)
+         if (any(mol%periodic)) then
+            self%nltr(thr_start(tid) + 1 : thr_start(tid) + thr_size) = thr_buf(tid)%nltr(1 : thr_size)
          end if
-      end do
-      !$omp end parallel do
-
-      if (allocated(head)) deallocate(head)
-      if (allocated(nxt)) deallocate(nxt)
-      deallocate(thr_img, atrack, thr_inl, ccount)
-
-      if (allocated(thr_buf)) then
-         do tid = 1, nthr
-            call deallocate_thread_buf(thr_buf(tid))
-         end do
-         deallocate(thr_buf)
       end if
+      !$omp end parallel
+
+      deallocate(head, nxt, ccount)
+      deallocate(thr_img, thr_buf, thr_start)
 
    end subroutine generate_hybrid
 
@@ -494,7 +471,7 @@ contains
       integer :: kmin(3), kmax(3)
 
       ! OpenMP specific variables
-      integer :: nthr, tid, t, t_start, t_size, t_tr_start
+      integer :: nthr, tid, t, thr_size
       integer(int64) :: thr_mem, thr_maxtr
 
       ! Thread tracking arrays
@@ -684,7 +661,6 @@ contains
       allocate(thr_trstart(nthr), source=0)
       thr_start(1) = 0
       thr_trstart(1) = 0
-
       do t = 2, nthr
          thr_start(t) = thr_start(t-1) + thr_img(t-1)
          thr_trstart(t) = thr_trstart(t-1) + thr_trptr(t-1)
@@ -706,21 +682,20 @@ contains
       call resize(wsc%itr_list, img + 1)
       call resize(wsc%tridx_list, trptr)
 
-      !$omp parallel private(tid, t_start, t_size, t_tr_start) &
-      !$omp shared(self, wsc, thr_start, thr_trstart, thr_img, thr_trptr, thr_buf)
+      !$omp parallel private(tid, thr_size) &
+      !$omp shared(self, wsc, thr_start, thr_img, thr_trptr, thr_buf)
       tid = omp_get_thread_num() + 1
-      t_start = thr_start(tid)
-      t_size = thr_img(tid)
-      t_tr_start = thr_trstart(tid)
+      thr_size = thr_img(tid)
 
-      if (t_size > 0) then
-         self%nlat(t_start + 1 : t_start + t_size) = thr_buf(tid)%nlat(1 : t_size)
-         wsc%nimg_list(t_start + 1 : t_start + t_size) = thr_buf(tid)%nimg(1 : t_size)
-         wsc%itr_list(t_start + 1 : t_start + t_size) = thr_buf(tid)%itr(1 : t_size) + t_tr_start
+      if (thr_size > 0) then
+         self%nlat(thr_start(tid) + 1 : thr_start(tid) + thr_size) = thr_buf(tid)%nlat(1 : thr_size)
+         wsc%nimg_list(thr_start(tid) + 1 : thr_start(tid) + thr_size) = thr_buf(tid)%nimg(1 : thr_size)
+         wsc%itr_list(thr_start(tid) + 1 : thr_start(tid) + thr_size) &
+         & = thr_buf(tid)%itr(1 : thr_size) + thr_trstart(tid)
       end if
 
       if (thr_trptr(tid) > 0) then
-         wsc%tridx_list(t_tr_start + 1 : t_tr_start + thr_trptr(tid)) = &
+         wsc%tridx_list(thr_trstart(tid) + 1 : thr_trstart(tid) + thr_trptr(tid)) = &
             thr_buf(tid)%tridx(1 : thr_trptr(tid))
       end if
       !$omp end parallel
@@ -730,13 +705,7 @@ contains
       deallocate(thr_img, thr_trptr)
       deallocate(thr_start, thr_trstart)
       deallocate(thr_nimg_max)
-
-      if (allocated(thr_buf)) then
-         do tid = 1, nthr
-            call deallocate_thread_buf(thr_buf(tid))
-         end do
-         deallocate(thr_buf)
-      end if
+      deallocate(thr_buf)
 
    end subroutine generate_wsc
 
