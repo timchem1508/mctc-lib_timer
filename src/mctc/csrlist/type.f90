@@ -13,11 +13,11 @@
 ! limitations under the License.
 
 !> @file mctc/csrlist/type.f90
-!> Compressed Sparse Row neighbour list implementation.
-
-!> Implementation of a sparse neighbour map in compressed sparse row format.
+!> @brief Compressed Sparse Row neighbour list implementation.
 !>
-!> A symmetric neighbour map given in dense format like
+!> Implementation of a sparse neighbour map in compressed sparse row (CSR) format.
+!>
+!> A symmetric neighbour map given in a dense format like:
 !>
 !>   |   | 1 | 2 | 3 | 4 | 5 | 6 |
 !>   |---|---|---|---|---|---|---|
@@ -28,94 +28,135 @@
 !>   | 5 | x | x |   | x |   |   |
 !>   | 6 |   | x | x | x |   |   |
 !>
-!> Is stored in two compressed array identifying the neighbouring atom `nlat`
-!> and its cell index `nltr`. Two index arrays `inl` for the offset
-!> and `nnl` for the number of entries map the atomic index to the row index.
+!> is stored in two compressed arrays: `nlat` identifying the neighbouring atom
+!> and `nltr` tracking its cell index. Two index arrays, `inl` for the offset
+!> and `nnl` for the number of entries, map the atomic index to the row index.
 !>
 !> ```
 !> inl   =     1,       4,          8,      11,         15,      18,     21
 !> nlat  =     2, 4, 5, 1, 3, 5, 6, 2, 4, 6, 1, 3, 5, 6, 1, 2, 4, 2, 3, 4
 !> nltr  =     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
 !> ```
-!> The first element of the 'nlat' and 'nltr' arrays is the diagonal entry of
-!> the atom itself, which is always present. One can choose to store either
-!> the full matrix (complete mode) or only upper triangular. Note, that the
-!> sparsity pattern is symmetric, but one can use it to store assymmetric
-!> matrices with symmetric sparsity pattern. The indexing can be accessed
-!> `nlat(inl(i):inl(i+1)-1)` to make it transferable for the CSR-support
-!> libraries (e.g. MKL, cuSPARSE, etc.).
-!> `nimg` saves the closest images of cross-interaction in the periodic system,
-!> `tridx` saves its translation index.
+!>
+!> The first element of `nlat` (`nlat(inl(i))`) and `nltr` (`nltr(inl(i))`)
+!> represents the diagonal entry of the atom itself, which is always present.
+!> You can choose to store either the full matrix (complete mode) or only the
+!> upper triangular part. Although the sparsity pattern is symmetric, this format
+!> can also be used to store asymmetric matrices with a symmetric sparsity pattern.
+!>
+!> The slice `nlat(inl(i):inl(i+1)-1)` can be accessed directly to ensure
+!> compatibility with standard CSR-support libraries (e.g., MKL, cuSPARSE, etc.).
+!>
+!> - `nimg`: Stores the closest images of cross-interactions in the periodic system.
+!> - `tridx`: Stores the corresponding translation index.
 
 module mctc_csrlist_type
    use iso_fortran_env, only : int64
    use mctc_env, only : wp, timer_type, format_time
    use mctc_io, only : structure_type
    use mctc_io_resize, only : resize
-   use mctc_cutoff, only: get_lattice_points
-   use mctc_wignerseitz, only : wignerseitz_cell
+   use mctc_cutoff, only : get_lattice_points
+   use mctc_wignerseitz, only : wignerseitz_cell, get_pairs
    implicit none
    private
 
    public :: csr_list, new_csr_list, compute_grid, get_linked_cell
 
-   !> Universal thread-local dynamic storage buffer for neighbourlist construction
-   type :: thread_buf_type
-      integer(int64) :: capacity = 0_int64
-      integer(int64) :: cap_tr   = 0_int64
-
-      integer, allocatable :: nlat(:)
-      integer, allocatable :: nltr(:)
-      integer, allocatable :: nimg(:)
-      integer, allocatable :: itr(:)
-      integer, allocatable :: tridx(:)
-   end type thread_buf_type
-
    !> @class csr_list
    !> Neighbourlist in CSR format
    type :: csr_list
+
       !> Realspace cutoff for neighbourlist generation
       real(wp), allocatable :: cutoff
+
       !> Complete asymmetric neighbour list flag
       logical :: complete
+
       !> Offset index in the neighbour map
       integer, allocatable :: inl(:)
+
       !> Number of neighbours for each atom
       integer, allocatable :: nnl(:)
+
       !> Index of the neighbouring atom
       integer, allocatable :: nlat(:)
+
       !> Cell index of the neighbouring atom
       integer, allocatable :: nltr(:)
+
       !> Lattice translation vector
       real(wp), allocatable :: trans(:, :)
+
       !> Wigner-Seitz cell type
       type(wignerseitz_cell), allocatable :: wsc
    end type csr_list
 
-   ! Default parameters
+   !> Universal thread-local dynamic storage buffer for neighbourlist construction
+   type :: thread_buf_type
+      !> Allocated capacity of pair-indexed arrays
+      integer(int64) :: capacity = 0_int64
+      !> Allocated capacity of the translation-index array
+      integer(int64) :: cap_tr = 0_int64
+      !> Neighbour atom indices
+      integer, allocatable :: nlat(:)
+      !> Neighbour translation indices
+      integer, allocatable :: nltr(:)
+      !> Number of Wigner-Seitz images per neighbour
+      integer, allocatable :: nimg(:)
+      !> Offset into the Wigner-Seitz image index array
+      integer, allocatable :: itr(:)
+      !> Wigner-Seitz image indices
+      integer, allocatable :: tridx(:)
+   end type thread_buf_type
+
+
+
+   !> Default real-space cutoff
    real(wp), parameter :: cutoff_def = 29.0_wp
+
+   !> Default non-periodic translation vector
    real(wp), parameter :: trans_def(3, 1) = 0.0_wp
+
+   !> Default incomplete neighbour-list mode
    logical, parameter :: complete_def = .false.
+
+   !> Initial number of neighbours allocated per atom
    integer, parameter :: init_size = 10
+
+   !> Padding applied to non-periodic cell bounds
    real(wp), parameter :: buffer = 0.1_wp
+
+   !> Smallest positive working-precision number
    real(wp), parameter :: eps = tiny(1.0_wp)
+
+   !> Squared-distance threshold for Wigner-Seitz images
    real(wp), parameter :: thr = sqrt(epsilon(0.0_wp))
+
+   !> Tolerance for equivalent Wigner-Seitz image distances
    real(wp), parameter :: tol = 0.01_wp
+
 
 contains
 
-   !> Create new neighbourlist for a given geometry and cutoff
+
+   !> Create a neighbour list for a geometry and cutoff
    subroutine new_csr_list(self, mol, wsc, cutoff, trans, complete)
+
       !> Instance of the neighbourlist
       type(csr_list), intent(out) :: self
+
       !> Structure type
       type(structure_type), intent(in) :: mol
+
       !> Wigner-Seitz cell type
       type(wignerseitz_cell), intent(inout), allocatable, optional :: wsc
+
       !> Realspace cutoff for neighbourlist generation
       real(wp), intent(in), optional :: cutoff
+
       !> Lattice translation vectors for periodic systems
       real(wp), intent(in), optional :: trans(:, :)
+
       !> Flag for complete neighbourlist generation
       logical, intent(in), optional :: complete
 
@@ -125,19 +166,20 @@ contains
       else
          self%cutoff = cutoff_def
       end if
-
       if (present(complete)) then
          self%complete = complete
       else
          self%complete = complete_def
       end if
-
       allocate(self%inl(mol%nat+1), source=0)
+
 
       if (any(mol%periodic)) then
          if (present(wsc)) then
+
             call generate_wsc(self, mol, wsc)
             call move_alloc(wsc, self%wsc)
+
          else if (present(trans)) then
             self%trans = trans
             call generate_hybrid(self, mol)
@@ -155,7 +197,10 @@ contains
 
    !> Dynamic expansion routine for pair-indexed arrays
    subroutine grow_buffer(buf)
+
+      !> Thread-local buffer to expand
       type(thread_buf_type), intent(inout) :: buf
+
       integer(int64) :: new_capacity
 
       if (buf%capacity <= 0) then
@@ -174,8 +219,13 @@ contains
 
    !> Dynamic expansion routine for translation index array
    subroutine grow_buffer_tr(buf, min_needed)
+
+      !> Thread-local buffer to expand
       type(thread_buf_type), intent(inout) :: buf
+
+      !> Minimum number of additional translation indices required
       integer, intent(in) :: min_needed
+
       integer(int64) :: new_capacity
 
       new_capacity = max(buf%cap_tr + int(min_needed, int64), buf%cap_tr * 2_int64)
@@ -183,7 +233,7 @@ contains
       buf%cap_tr = new_capacity
    end subroutine grow_buffer_tr
 
-!> Generator of the CSR-based Hybrid Neighbour List
+   !> Generate a CSR-based hybrid neighbour list
    subroutine generate_hybrid(self, mol)
       use omp_lib
 
@@ -194,7 +244,11 @@ contains
 
       integer :: iat, jat, itr, img, jc
       integer :: ix, iy, iz, jx, jy, jz, di, dj, dk, d
+
+      !> Flattened linked-cell heads, indexed as x + nx * (y - 1) + nx * ny * (z - 1)
       integer, allocatable :: head(:), nxt(:)
+
+      !> Number of linked cells along the x, y, and z directions
       integer :: n_xyz(3)
       real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3)
       real(wp) :: vol, dens, det, lat_inv(3, 3), fract(3)
@@ -229,11 +283,14 @@ contains
       do d = 1, 3
          select case (n_xyz(d))
           case (1)
-            kmin(d) = 0; kmax(d) = 0
+            kmin(d) = 0
+            kmax(d) = 0
           case (2)
-            kmin(d) = 0; kmax(d) = 1
+            kmin(d) = 0
+            kmax(d) = 1
           case default
-            kmin(d) = -1; kmax(d) = 1
+            kmin(d) = -1
+            kmax(d) = 1
          end select
       end do
 
@@ -248,7 +305,8 @@ contains
          call get_linked_cell(mol, n_xyz, head, nxt, ccount, cell_w=cell_w)
       end if
 
-      ! 3. Perform basic statistical analysis to estimate initial buffer size
+      ! 3. Estimate buffer capacity from occupied-cell density. The median
+      ! population excludes empty cells so sparse regions do not reduce the estimate.
       nz_count = count(ccount > 0)
       call get_median(ccount, median)
 
@@ -266,7 +324,7 @@ contains
 
       allocate(thr_img(nthr), source=0)
 
-      thr_mem = max(int(init_size * mol%nat, int64), &
+      thr_mem = max(int(init_size * mol%nat, int64) / int(nthr, int64), &
       & int(real((prob * mol%nat), wp) / real(nthr, wp), int64))
       thr_mem = max(100_int64, thr_mem)
 
@@ -456,8 +514,12 @@ contains
 
       integer :: iat, jat, img, jc
       integer :: ix, iy, iz, jx, jy, jz, di, dj, dk, d
+
+      !> Flattened linked-cell heads, indexed as x + nx * (y - 1) + nx * ny * (z - 1)
       integer, allocatable :: head(:), nxt(:), ccount(:)
 
+
+      !> Number of linked cells along the x, y, and z directions
       integer :: n_xyz(3), ntr, median, nz_count
       real(wp) :: cutoff2, r2_min, dens
       real(wp) :: lat_inv(3, 3), det
@@ -510,7 +572,8 @@ contains
 
       call get_linked_cell(mol, n_xyz, head, nxt, ccount, lat_inv)
 
-      ! Calculate median linked-cell population for non-zero cell counts
+      ! Estimate buffer capacity from occupied-cell density. The median ignores
+      ! empty cells so sparse regions do not reduce the estimate.
       nz_count = count(ccount > 0)
       call get_median(ccount, median)
 
@@ -518,11 +581,14 @@ contains
       do d = 1, 3
          select case (n_xyz(d))
           case (1)
-            kmin(d) = 0; kmax(d) = 0
+            kmin(d) = 0
+            kmax(d) = 0
           case (2)
-            kmin(d) = 0; kmax(d) = 1
+            kmin(d) = 0
+            kmax(d) = 1
           case default
-            kmin(d) = -1; kmax(d) = 1
+            kmin(d) = -1
+            kmax(d) = 1
          end select
       end do
 
@@ -538,8 +604,9 @@ contains
       prob = ceiling(dens * self%cutoff**3.0_wp * 4.0_wp)
       if (self%complete) prob = prob * 2
 
-      thr_mem = max(init_size * mol%nat, &
+      thr_mem = max(int(init_size * mol%nat, int64) / int(nthr, int64), &
       & int(real((prob * mol%nat), wp) / real(nthr, wp), int64))
+      thr_mem = max(100_int64, thr_mem)
       thr_maxtr = thr_mem * 6
 
       ! Allocate thread metrics
@@ -573,7 +640,7 @@ contains
          start_count = thr_img(tid)
 
          ! A. Search for diagonal periodic self-interactions
-         call get_wsc_pairs(trans, zero_vec, nimg_count, tridx_arr, r2_min)
+         call get_pairs(trans, zero_vec, nimg_count, tridx_arr, r2_min)
          if (nimg_count > 0 .and. r2_min <= cutoff2) then
             total_self_nimg = nimg_count
          else
@@ -624,7 +691,7 @@ contains
                      ! Upper Triangular (jat > iat) vs Complete Mode (all jat /= iat)
                      if (self%complete .or. jat > iat) then
                         vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
-                        call get_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
+                        call get_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
 
                         if (nimg_count > 0 .and. r2_min <= cutoff2) then
                            thr_img(tid) = thr_img(tid) + 1
@@ -709,49 +776,6 @@ contains
 
    end subroutine generate_wsc
 
-   subroutine get_wsc_pairs(trans, rij, iws, list, min_r2)
-      !> Translation vectors
-      real(wp), intent(in) :: trans(:, :)
-      !> Interatomic vector
-      real(wp), intent(in) :: rij(3)
-      !> Number of images for a pair
-      integer, intent(out) :: iws
-      !> List of image indices for a pair
-      integer, intent(out) :: list(:)
-      !> Minimum squared distance found
-      real(wp), intent(out) :: min_r2
-
-      real(wp) :: dx, dy, dz, r2
-      integer :: itr, ntr, img
-
-      ntr = size(trans, 2)
-      iws = 0
-      img = 0
-      min_r2 = huge(1.0_wp)
-
-      do itr = 1, ntr
-         dx = rij(1) - trans(1, itr)
-         dy = rij(2) - trans(2, itr)
-         dz = rij(3) - trans(3, itr)
-         r2 = dx*dx + dy*dy + dz*dz
-
-         if (r2 < thr) cycle
-         img = img + 1
-
-         if (r2 < min_r2 - tol) then
-            ! Found a strictly better minimum
-            min_r2 = r2
-            iws = 1
-            list(1) = img
-         else if (r2 < min_r2 + tol) then
-            ! Within tolerance: record degeneracy
-            iws = iws + 1
-            list(iws) = img
-         end if
-      end do
-
-   end subroutine get_wsc_pairs
-
    !> Computes safe linked cell grid sub-divisions for any crystal class
    subroutine compute_grid(mol, cutoff, det, n_xyz, lat_inv, cell_w)
       !> Stucture type
@@ -831,13 +855,17 @@ contains
    subroutine get_linked_cell(mol, n_xyz, head, nxt, ccount, lat_inv, cell_w)
       !> Stucture type
       type(structure_type), intent(in) :: mol
-      !> Output: Number of grid subdivisions along each axis
+
+      !> Number of linked cells along the x, y, and z directions
       integer, intent(in) :: n_xyz(3)
-      !> Linked cell list head array
+
+      !> Flattened cell-to-atom chain heads using x + nx * (y - 1) + nx * ny * (z - 1)
       integer, intent(out) :: head(:)
-      !> Linked cell list next array
+
+      !> Next atom in each linked-cell chain, indexed by atom
       integer, intent(out) :: nxt(:)
-      !> Cell population counts
+
+      !> Population of each flattened linked cell
       integer, intent(out) :: ccount(:)
       !> Inverse of the lattice matrix
       real(wp), intent(in), optional :: lat_inv(3, 3)
@@ -895,8 +923,13 @@ contains
 
    end subroutine get_linked_cell
 
+   !> Determine the median population among non-empty linked cells
    subroutine get_median(cells, median)
+
+      !> Population of each linked cell
       integer, intent(in) :: cells(:)
+
+      !> Median population among non-empty linked cells
       integer, intent(out) :: median
 
       integer :: nz_count, max_cell_val, cumulative_sum, i_cell
@@ -908,7 +941,8 @@ contains
          max_cell_val = maxval(cells)
          allocate(hist(1:max_cell_val), source=0)
 
-         ! Build histogram of population frequencies for non-zero cells
+         ! Build a histogram only for occupied cells; empty cells are excluded from
+         ! the median because it estimates the population of cells that are searched.
          do i_cell = 1, size(cells)
             if (cells(i_cell) > 0) then
                hist(cells(i_cell)) = hist(cells(i_cell)) + 1
