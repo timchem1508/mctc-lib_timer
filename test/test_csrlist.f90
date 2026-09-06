@@ -12,29 +12,32 @@
 ! See the License for the specific language governing permissions and
 ! limitations under the License.
 
+!> Unit tests for compressed sparse row neighbour lists
 module test_csrlist
    use iso_fortran_env, only : int64
    use mctc_env, only : wp, timer_type, format_time
    use mctc_io_resize, only : resize
    use mctc_wignerseitz, only : wignerseitz_cell, new_wignerseitz_cell
-   use mctc_io_structure, only: structure_type, new
-   use mctc_cutoff, only: get_lattice_points
+   use mctc_io_structure, only : structure_type, new
+   use mctc_cutoff, only : get_lattice_points
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, &
    & test_failed, check
    use testsuite_structure, only : get_structure
-   use mctc_csrlist, only : csr_list, new_csr_list, compute_grid, get_linked_cell, gemv_cmp
+   use mctc_csrlist, only : csr_list, new_csr_list, compute_grid, &
+   & get_linked_cell, gemv_cmp
    implicit none
    private
 
    public :: collect_csrlist
 
-
+   !> Tolerance for floating-point comparisons
    real(wp), parameter :: thr = sqrt(epsilon(1.0_wp))
+
 
 contains
 
 
-!> Collect all exported unit tests
+   !> Collect all exported unit tests
    subroutine collect_csrlist(testsuite)
 
       !> Collection of tests
@@ -81,6 +84,7 @@ contains
 
 !> Generate reference 1-based CSR list
    subroutine gen_verlet(mol, trans, cutoff, row_ptr, col_ind, nltr, complete)
+
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
       !> Translation vectors for all images
@@ -143,8 +147,13 @@ contains
 
    end subroutine gen_verlet
 
+   !> Replicate a structure along each lattice-vector direction
    subroutine make_supercell(mol, rep)
+
+      !> Structure to replicate
       type(structure_type), intent(inout) :: mol
+
+      !> Replication factors along the three lattice vectors
       integer, intent(in) :: rep(3)
 
       real(wp), allocatable :: xyz(:, :), lattice(:, :)

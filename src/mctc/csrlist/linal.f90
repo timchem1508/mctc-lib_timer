@@ -14,9 +14,11 @@
 
 !> @file mctc/csrlist/linal.f90
 !> Matrix-vector routines for CSR compressed matrices.
+
+!> Matrix-vector operations on CSR compressed matrices
 module mctc_csrlist_linal
    use mctc_env, only : wp
-   use mctc_csrlist_type, only: csr_list
+   use mctc_csrlist_type, only : csr_list
    implicit none
    private
 
@@ -31,16 +33,32 @@ module mctc_csrlist_linal
 
 contains
 
-!================================================================================
-! GEMV 111 - Standard CSR-based SpMV based on CSR list, matrix and vector arrays
-!================================================================================
+
+!> Multiply a CSR matrix by a vector with optional symmetry handling
    subroutine gemv_cmp_111_standard(list, mlist, x, y, alpha, beta, symmetric, complete)
+
+      !> CSR neighbour-list structure
       type(csr_list), intent(in) :: list
-      real(wp), intent(in)  :: mlist(:)
-      real(wp), intent(in)  :: x(:)
+
+      !> Matrix elements in CSR order
+      real(wp), intent(in) :: mlist(:)
+
+      !> Input vector
+      real(wp), intent(in) :: x(:)
+
+      !> Output vector, updated in place
       real(wp), intent(inout) :: y(:)
-      real(wp), intent(in)  :: alpha, beta
+
+      !> Matrix scaling factor
+      real(wp), intent(in) :: alpha
+
+      !> Existing-vector scaling factor
+      real(wp), intent(in) :: beta
+
+      !> Whether the matrix has symmetric sparsity
       logical, intent(in), optional :: symmetric
+
+      !> Whether the CSR list contains both matrix triangles
       logical, intent(in), optional :: complete
 
       integer :: i, k, j, n
@@ -97,16 +115,33 @@ contains
 
    end subroutine gemv_cmp_111_standard
 
-!==================================================================================================
-! GEMV 111 - CSR-based SpMV for symmetric matrix separated on diagonal and off-diagonal components
-!==================================================================================================
+
+
+!> Multiply a symmetric CSR matrix with separate diagonal elements by a vector
    subroutine gemv_cmp_111(list, mlist, mdiag, x, y, alpha, beta, symmetric)
+
+      !> CSR neighbour-list structure
       type(csr_list), intent(in) :: list
-      real(wp), intent(in)  :: mlist(:)
-      real(wp), intent(in)  :: mdiag(:)
-      real(wp), intent(in)  :: x(:)
+
+      !> Off-diagonal matrix elements in CSR order
+      real(wp), intent(in) :: mlist(:)
+
+      !> Diagonal matrix elements
+      real(wp), intent(in) :: mdiag(:)
+
+      !> Input vector
+      real(wp), intent(in) :: x(:)
+
+      !> Output vector, updated in place
       real(wp), intent(inout) :: y(:)
-      real(wp), intent(in)  :: alpha, beta
+
+      !> Matrix scaling factor
+      real(wp), intent(in) :: alpha
+
+      !> Existing-vector scaling factor
+      real(wp), intent(in) :: beta
+
+      !> Whether the matrix has symmetric sparsity
       logical, intent(in), optional :: symmetric
 
       integer :: i, k, j, n
@@ -149,16 +184,33 @@ contains
 
    end subroutine gemv_cmp_111
 
-!====================================================================================
-! GEMV 211 - Standard CSR-based SpMV based on CSR list, full matrix and vector array
-!====================================================================================
+
+
+!> Multiply a CSR-indexed full matrix by a vector with optional symmetry handling
    subroutine gemv_cmp_211_standard(list, matr, x, y, alpha, beta, symmetric, complete)
+
+      !> CSR neighbour-list structure
       type(csr_list), intent(in) :: list
-      real(wp), intent(in)  :: matr(:, :)
-      real(wp), intent(in)  :: x(:)
+
+      !> Full matrix indexed by neighbouring and central atoms
+      real(wp), intent(in) :: matr(:, :)
+
+      !> Input vector
+      real(wp), intent(in) :: x(:)
+
+      !> Output vector, updated in place
       real(wp), intent(inout) :: y(:)
-      real(wp), intent(in)  :: alpha, beta
+
+      !> Matrix scaling factor
+      real(wp), intent(in) :: alpha
+
+      !> Existing-vector scaling factor
+      real(wp), intent(in) :: beta
+
+      !> Whether the matrix has symmetric sparsity
       logical, intent(in), optional :: symmetric
+
+      !> Whether the CSR list contains both matrix triangles
       logical, intent(in), optional :: complete
 
       integer :: i, k, j, n

@@ -15,7 +15,7 @@
 !> Environment for Wiegner-Seitz periodic boundaries handling.
 
 module mctc_wignerseitz
-   use mctc_wignerseitz_type, only : new_wignerseitz_cell, get_wignerseitz_weights, wignerseitz_cell
+   use mctc_wignerseitz_type, only : new_wignerseitz_cell, get_wignerseitz_weights, wignerseitz_cell, get_pairs
    implicit none
    public
 
