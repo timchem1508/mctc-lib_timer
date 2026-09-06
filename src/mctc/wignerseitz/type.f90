@@ -21,7 +21,7 @@ module mctc_wignerseitz_type
    implicit none
    private
 
-   public :: new_wignerseitz_cell, get_wignerseitz_weights, wignerseitz_cell
+   public :: new_wignerseitz_cell, get_wignerseitz_weights, wignerseitz_cell, get_pairs
 
    type :: wignerseitz_cell
       integer :: nimg_max
@@ -32,6 +32,11 @@ module mctc_wignerseitz_type
       integer, allocatable :: tridx_list(:)
       real(wp), allocatable :: trans(:, :)
    end type wignerseitz_cell
+
+   interface get_pairs
+      module procedure get_pairs
+      module procedure get_pairs_csr
+   end interface get_pairs
 
 
    !> Small cutoff threshold to create only closest cells
@@ -125,6 +130,48 @@ contains
 
    end subroutine get_pairs
 
+   subroutine get_pairs_csr(trans, rij, iws, list, min_r2)
+      !> Translation vectors
+      real(wp), intent(in) :: trans(:, :)
+      !> Interatomic vector
+      real(wp), intent(in) :: rij(3)
+      !> Number of images for a pair
+      integer, intent(out) :: iws
+      !> List of image indices for a pair
+      integer, intent(out) :: list(:)
+      !> Minimum squared distance found
+      real(wp), intent(out) :: min_r2
+
+      real(wp) :: dx, dy, dz, r2
+      integer :: itr, ntr, img
+
+      ntr = size(trans, 2)
+      iws = 0
+      img = 0
+      min_r2 = huge(1.0_wp)
+
+      do itr = 1, ntr
+         dx = rij(1) - trans(1, itr)
+         dy = rij(2) - trans(2, itr)
+         dz = rij(3) - trans(3, itr)
+         r2 = dx*dx + dy*dy + dz*dz
+
+         if (r2 < thr) cycle
+         img = img + 1
+
+         if (r2 < min_r2 - tol) then
+            ! Found a strictly better minimum
+            min_r2 = r2
+            iws = 1
+            list(1) = img
+         else if (r2 < min_r2 + tol) then
+            ! Within tolerance: record degeneracy
+            iws = iws + 1
+            list(iws) = img
+         end if
+      end do
+
+   end subroutine get_pairs_csr
 
 !> Compact C2 switching function for competing nearest images
    pure elemental function smooth_image_weight(delta) result(weight)
