@@ -51,7 +51,6 @@
 !> - `tridx`: Stores the corresponding translation index.
 
 module mctc_csrlist_type
-   use iso_fortran_env, only : int64
    use mctc_env, only : wp, timer_type, format_time
    use mctc_io, only : structure_type
    use mctc_io_resize, only : resize
@@ -94,9 +93,9 @@ module mctc_csrlist_type
    !> Universal thread-local dynamic storage buffer for neighbourlist construction
    type :: thread_buf_type
       !> Allocated capacity of pair-indexed arrays
-      integer(int64) :: capacity = 0_int64
+      integer :: capacity = 0
       !> Allocated capacity of the translation-index array
-      integer(int64) :: cap_tr = 0_int64
+      integer :: cap_tr = 0
       !> Neighbour atom indices
       integer, allocatable :: nlat(:)
       !> Neighbour translation indices
@@ -201,18 +200,18 @@ contains
       !> Thread-local buffer to expand
       type(thread_buf_type), intent(inout) :: buf
 
-      integer(int64) :: new_capacity
+      integer :: new_capacity
 
       if (buf%capacity <= 0) then
-         new_capacity = 1024_int64
+         new_capacity = 1024
       else
-         new_capacity = buf%capacity * 2_int64
+         new_capacity = buf%capacity * 2
       end if
 
-      if (allocated(buf%nlat)) call resize(buf%nlat, int(new_capacity))
-      if (allocated(buf%nltr)) call resize(buf%nltr, int(new_capacity))
-      if (allocated(buf%nimg)) call resize(buf%nimg, int(new_capacity))
-      if (allocated(buf%itr))  call resize(buf%itr,  int(new_capacity))
+      if (allocated(buf%nlat)) call resize(buf%nlat, new_capacity)
+      if (allocated(buf%nltr)) call resize(buf%nltr, new_capacity)
+      if (allocated(buf%nimg)) call resize(buf%nimg, new_capacity)
+      if (allocated(buf%itr))  call resize(buf%itr,  new_capacity)
 
       buf%capacity = new_capacity
    end subroutine grow_buffer
@@ -226,10 +225,10 @@ contains
       !> Minimum number of additional translation indices required
       integer, intent(in) :: min_needed
 
-      integer(int64) :: new_capacity
+      integer :: new_capacity
 
-      new_capacity = max(buf%cap_tr + int(min_needed, int64), buf%cap_tr * 2_int64)
-      if (allocated(buf%tridx)) call resize(buf%tridx, int(new_capacity))
+      new_capacity = max(buf%cap_tr + min_needed, buf%cap_tr * 2)
+      if (allocated(buf%tridx)) call resize(buf%tridx, new_capacity)
       buf%cap_tr = new_capacity
    end subroutine grow_buffer_tr
 
@@ -252,7 +251,7 @@ contains
       integer :: n_xyz(3)
       real(wp) :: r2, vec(3), cutoff2, cell_w(3), min_xyz(3)
       real(wp) :: vol, dens, det, lat_inv(3, 3), fract(3)
-      integer(int64) :: prob
+      integer :: prob
       integer, allocatable :: ccount(:)
 
       ! Dynamic stencil search bounds per dimension
@@ -263,7 +262,7 @@ contains
       integer :: nz_count, median
 
       ! OpenMP specific variables
-      integer(int64) :: thr_mem
+      integer :: thr_mem
       integer :: nthr, tid, start_count, thr_size
       integer, allocatable :: thr_img(:)
       integer, allocatable :: thr_start(:)
@@ -316,6 +315,8 @@ contains
       if (self%complete) prob = prob * 2
 
       ! 4. OpenMP Setup & Allocation
+      call omp_set_dynamic(.false.)
+
       !$omp parallel
       !$omp master
       nthr = omp_get_num_threads()
@@ -324,15 +325,17 @@ contains
 
       allocate(thr_img(nthr), source=0)
 
-      thr_mem = max(int(init_size * mol%nat, int64) / int(nthr, int64), &
-      & int(real((prob * mol%nat), wp) / real(nthr, wp), int64))
-      thr_mem = max(100_int64, thr_mem)
+      thr_mem = max(int(init_size * mol%nat) / nthr, &
+      & int(real((prob * mol%nat), wp) / real(nthr, wp)))
+      thr_mem = max(100, thr_mem)
 
       allocate(thr_buf(nthr))
       do tid = 1, nthr
          thr_buf(tid)%capacity = thr_mem
          allocate(thr_buf(tid)%nlat(thr_buf(tid)%capacity))
-         if (any(mol%periodic)) allocate(thr_buf(tid)%nltr(thr_buf(tid)%capacity))
+         if (any(mol%periodic)) then
+            allocate(thr_buf(tid)%nltr(thr_buf(tid)%capacity))
+         end if
       end do
 
       if (allocated(self%inl)) deallocate(self%inl)
@@ -342,7 +345,7 @@ contains
       if (any(mol%periodic)) then
          ! Periodic Branch
 
-         !$omp parallel do schedule(static) &
+         !$omp parallel do schedule(static) num_threads(nthr) &
          !$omp private(iat, tid, start_count, ix, iy, iz, dk, dj, di, fract) &
          !$omp private(jx, jy, jz, jc, jat, itr, vec, r2) &
          !$omp shared(mol, self, head, nxt, thr_img) &
@@ -409,7 +412,8 @@ contains
          ! Non-periodic (Molecular) Branch
          min_xyz = minval(mol%xyz, dim=2) - buffer
 
-         !$omp parallel do schedule(static) &
+         ! FIX: num_threads(nthr) pins this region's team size, same reasoning as above.
+         !$omp parallel do schedule(static) num_threads(nthr) &
          !$omp private(iat, tid, start_count, ix, iy, iz, dk, dj, di, jx, jy, jz, jc, jat, vec, r2) &
          !$omp private(di_min, di_max, dj_min, dj_max, dk_min, dk_max) &
          !$omp shared(mol, self, head, nxt, thr_img) &
@@ -483,18 +487,20 @@ contains
       call resize(self%nlat, img)
       if (any(mol%periodic)) call resize(self%nltr, img)
 
-      !$omp parallel private(tid, thr_size) &
-      !$omp shared(self, thr_start, thr_img, thr_buf)
-      tid = omp_get_thread_num() + 1
-      thr_size = thr_img(tid)
+      !$omp parallel do schedule(static) num_threads(nthr) &
+      !$omp private(tid, thr_size) &
+      !$omp shared(self, thr_start, thr_img, thr_buf, mol)
+      do tid = 1, nthr
+         thr_size = thr_img(tid)
 
-      if (thr_size > 0) then
-         self%nlat(thr_start(tid) + 1 : thr_start(tid) + thr_size) = thr_buf(tid)%nlat(1 : thr_size)
-         if (any(mol%periodic)) then
-            self%nltr(thr_start(tid) + 1 : thr_start(tid) + thr_size) = thr_buf(tid)%nltr(1 : thr_size)
+         if (thr_size > 0) then
+            self%nlat(thr_start(tid) + 1 : thr_start(tid) + thr_size) = thr_buf(tid)%nlat(1 : thr_size)
+            if (any(mol%periodic)) then
+               self%nltr(thr_start(tid) + 1 : thr_start(tid) + thr_size) = thr_buf(tid)%nltr(1 : thr_size)
+            end if
          end if
-      end if
-      !$omp end parallel
+      end do
+      !$omp end parallel do
 
       deallocate(head, nxt, ccount)
       deallocate(thr_img, thr_buf, thr_start)
@@ -527,6 +533,7 @@ contains
       real(wp), allocatable :: trans(:, :)
       real(wp) :: vec(3), zero_vec(3)
       real(wp) :: vol
+
       integer :: prob
       integer :: trptr, total_self_nimg, start_count
 
@@ -534,7 +541,7 @@ contains
 
       ! OpenMP specific variables
       integer :: nthr, tid, t, thr_size
-      integer(int64) :: thr_mem, thr_maxtr
+      integer :: thr_mem, thr_maxtr
 
       ! Thread tracking arrays
       integer, allocatable :: thr_img(:), thr_trptr(:)
@@ -593,6 +600,8 @@ contains
       end do
 
       ! 4. Setup OpenMP Thread-Local Environments
+      call omp_set_dynamic(.false.)
+
       !$omp parallel
       !$omp master
       nthr = omp_get_num_threads()
@@ -604,9 +613,9 @@ contains
       prob = ceiling(dens * self%cutoff**3.0_wp * 4.0_wp)
       if (self%complete) prob = prob * 2
 
-      thr_mem = max(int(init_size * mol%nat, int64) / int(nthr, int64), &
-      & int(real((prob * mol%nat), wp) / real(nthr, wp), int64))
-      thr_mem = max(100_int64, thr_mem)
+      thr_mem = max(int(init_size * mol%nat) / int(nthr), &
+      & int(real((prob * mol%nat), wp) / real(nthr, wp)))
+      thr_mem = max(100, thr_mem)
       thr_maxtr = thr_mem * 6
 
       ! Allocate thread metrics
@@ -630,7 +639,7 @@ contains
       allocate(self%inl(mol%nat + 1), source=0)
 
       ! 5. Threaded Loop Search
-      !$omp parallel do schedule(static) &
+      !$omp parallel do schedule(static) num_threads(nthr) &
       !$omp private(iat, tid, start_count, fract, ix, iy, iz, dk, dj, &
       !$omp        di, jx, jy, jz, jc, jat, vec, nimg_count, tridx_arr, r2_min, total_self_nimg) &
       !$omp shared(mol, self, head, nxt, thr_img, thr_trptr, thr_buf, thr_nimg_max, &
@@ -749,23 +758,25 @@ contains
       call resize(wsc%itr_list, img + 1)
       call resize(wsc%tridx_list, trptr)
 
-      !$omp parallel private(tid, thr_size) &
-      !$omp shared(self, wsc, thr_start, thr_img, thr_trptr, thr_buf)
-      tid = omp_get_thread_num() + 1
-      thr_size = thr_img(tid)
+      !$omp parallel do schedule(static) num_threads(nthr) &
+      !$omp private(tid, thr_size) &
+      !$omp shared(self, wsc, thr_start, thr_trstart, thr_img, thr_trptr, thr_buf)
+      do tid = 1, nthr
+         thr_size = thr_img(tid)
 
-      if (thr_size > 0) then
-         self%nlat(thr_start(tid) + 1 : thr_start(tid) + thr_size) = thr_buf(tid)%nlat(1 : thr_size)
-         wsc%nimg_list(thr_start(tid) + 1 : thr_start(tid) + thr_size) = thr_buf(tid)%nimg(1 : thr_size)
-         wsc%itr_list(thr_start(tid) + 1 : thr_start(tid) + thr_size) &
-         & = thr_buf(tid)%itr(1 : thr_size) + thr_trstart(tid)
-      end if
+         if (thr_size > 0) then
+            self%nlat(thr_start(tid) + 1 : thr_start(tid) + thr_size) = thr_buf(tid)%nlat(1 : thr_size)
+            wsc%nimg_list(thr_start(tid) + 1 : thr_start(tid) + thr_size) = thr_buf(tid)%nimg(1 : thr_size)
+            wsc%itr_list(thr_start(tid) + 1 : thr_start(tid) + thr_size) &
+            & = thr_buf(tid)%itr(1 : thr_size) + thr_trstart(tid)
+         end if
 
-      if (thr_trptr(tid) > 0) then
-         wsc%tridx_list(thr_trstart(tid) + 1 : thr_trstart(tid) + thr_trptr(tid)) = &
-            thr_buf(tid)%tridx(1 : thr_trptr(tid))
-      end if
-      !$omp end parallel
+         if (thr_trptr(tid) > 0) then
+            wsc%tridx_list(thr_trstart(tid) + 1 : thr_trstart(tid) + thr_trptr(tid)) = &
+               thr_buf(tid)%tridx(1 : thr_trptr(tid))
+         end if
+      end do
+      !$omp end parallel do
       wsc%itr_list(img + 1) = trptr + 1
 
       deallocate(head, nxt, ccount)
