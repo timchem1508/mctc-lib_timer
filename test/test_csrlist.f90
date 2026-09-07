@@ -48,10 +48,19 @@ contains
       & new_unittest("grid-water", test_grid_water), &
       & new_unittest("grid-fullerene-cut-1", test_grid_fullerene_cut_1), &
       & new_unittest("grid-water-cut-1", test_grid_water_cut_1), &
+      & new_unittest("grid-nacl", test_grid_nacl), &
+      & new_unittest("grid-feo2", test_grid_feo2), &
+      & new_unittest("grid-x02-1x1x4", test_grid_x02_114), &
+      & new_unittest("distance-fullerene-cut-5", test_distance_fullerene_cut_5), &
+      & new_unittest("distance-feo2-cut-5", test_distance_feo2_cut_5), &
       & new_unittest("csr-vs-verlet-water", test_list_water), &
       & new_unittest("csr-vs-verlet-methane", test_list_methane), &
       & new_unittest("csr-vs-verlet-fullerene", test_list_fullerene), &
-      & new_unittest("distance-fullerene-cut-5", test_distance_fullerene_cut_5), &
+      & new_unittest("csr-vs-verlet-nacl", test_list_nacl), &
+      & new_unittest("csr-vs-verlet-feo2", test_list_feo2), &
+      & new_unittest("csr-vs-verlet-x01", test_list_x01), &
+      & new_unittest("csr-vs-verlet-x02", test_list_x02), &
+      & new_unittest("csr-vs-verlet-x02-1x1x4", test_list_x02_114), &
       & new_unittest("csr-vs-verlet-mb01", test_list_mb01), &
       & new_unittest("csr-vs-verlet-mb02", test_list_mb02), &
       & new_unittest("csr-vs-verlet-water-complete", test_list_water_complete), &
@@ -59,15 +68,6 @@ contains
       & new_unittest("csr-vs-verlet-fullerene-complete", test_list_fullerene_complete), &
       & new_unittest("csr-vs-verlet-mb09-complete", test_list_mb09_complete), &
       & new_unittest("csr-vs-verlet-mb10-complete", test_list_mb10_complete), &
-      & new_unittest("grid-nacl", test_grid_nacl), &
-      & new_unittest("grid-feo2", test_grid_feo2), &
-      & new_unittest("distance-feo2-cut-5", test_distance_feo2_cut_5), &
-      & new_unittest("csr-vs-verlet-nacl", test_list_nacl), &
-      & new_unittest("csr-vs-verlet-feo2", test_list_feo2), &
-      & new_unittest("csr-vs-verlet-x01", test_list_x01), &
-      & new_unittest("csr-vs-verlet-x02", test_list_x02), &
-      & new_unittest("grid-x02-1x1x4", test_grid_x02_114), &
-      & new_unittest("csr-vs-verlet-x02-1x1x4", test_list_x02_114), &
       & new_unittest("csr-vs-verlet-nacl-complete", test_list_nacl_complete), &
       & new_unittest("csr-vs-verlet-feo2-complete", test_list_feo2_complete), &
       & new_unittest("csr-vs-verlet-x04-complete", test_list_x04_complete), &
@@ -420,6 +420,28 @@ contains
    end subroutine test_wsc
 
 
+   subroutine test_grid_methane(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      !> Reference linked-cell grid dimensions
+      integer, parameter :: ref_nxyz(3) = [ 1, 1, 1 ]
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 29.0_wp
+      real(wp), allocatable :: trans(:, :)
+
+      allocate(trans(3, 1))
+      trans = 0.0_wp
+
+      call get_structure(mol, "methane")
+
+      call test_grid_gen(error, mol, cutoff, ref_nxyz)
+
+   end subroutine test_grid_methane
+
+
    subroutine test_grid_water(error)
 
       !> Error handling
@@ -441,26 +463,6 @@ contains
 
    end subroutine test_grid_water
 
-   subroutine test_grid_water_cut_1(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      !> Reference linked-cell grid dimensions
-      integer, parameter :: ref_nxyz(3) = [ 1, 3, 1 ]
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 1.0_wp
-      real(wp), allocatable :: trans(:, :)
-
-      allocate(trans(3, 1))
-      trans = 0.0_wp
-
-      call get_structure(mol, "water")
-
-      call test_grid_gen(error, mol, cutoff, ref_nxyz)
-
-   end subroutine test_grid_water_cut_1
 
    subroutine test_grid_fullerene_cut_1(error)
 
@@ -483,7 +485,30 @@ contains
 
    end subroutine test_grid_fullerene_cut_1
 
-   subroutine test_grid_methane(error)
+
+   subroutine test_grid_water_cut_1(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      !> Reference linked-cell grid dimensions
+      integer, parameter :: ref_nxyz(3) = [ 1, 3, 1 ]
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 1.0_wp
+      real(wp), allocatable :: trans(:, :)
+
+      allocate(trans(3, 1))
+      trans = 0.0_wp
+
+      call get_structure(mol, "water")
+
+      call test_grid_gen(error, mol, cutoff, ref_nxyz)
+
+   end subroutine test_grid_water_cut_1
+
+
+   subroutine test_grid_nacl(error)
 
       !> Error handling
       type(error_type), allocatable, intent(out) :: error
@@ -495,15 +520,82 @@ contains
       real(wp), parameter :: cutoff = 29.0_wp
       real(wp), allocatable :: trans(:, :)
 
-      allocate(trans(3, 1))
-      trans = 0.0_wp
-
-      call get_structure(mol, "methane")
+      call get_structure(mol, "nacl")
+      call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans)
 
       call test_grid_gen(error, mol, cutoff, ref_nxyz)
 
-   end subroutine test_grid_methane
+   end subroutine test_grid_nacl
+   subroutine test_grid_feo2(error)
 
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      !> Reference linked-cell grid dimensions
+      integer, parameter :: ref_nxyz(3) = [ 1, 1, 1 ]
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 29.0_wp
+      real(wp), allocatable :: trans(:, :)
+
+      call get_structure(mol, "feo2")
+      call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans)
+
+      call test_grid_gen(error, mol, cutoff, ref_nxyz)
+
+   end subroutine test_grid_feo2
+   subroutine test_grid_x02_114(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      !> Reference linked-cell grid dimensions
+      integer, parameter :: ref_nxyz(3) = [ 1, 1, 3 ]
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 29.0_wp
+      real(wp), allocatable :: trans(:, :)
+      integer, parameter :: supercell(*) = [1, 1, 4]
+
+      call get_structure(mol, "x02")
+      call make_supercell(mol, supercell)
+      call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans)
+
+      call test_grid_gen(error, mol, cutoff, ref_nxyz)
+
+   end subroutine test_grid_x02_114
+   subroutine test_distance_fullerene_cut_5(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 5.0_wp
+      real(wp), allocatable :: trans(:, :)
+
+      allocate(trans(3, 1))
+      trans = 0.0_wp
+
+      call get_structure(mol, "fullerene")
+
+      call test_distance(error, mol, cutoff, trans=trans, cmp=.false.)
+
+   end subroutine test_distance_fullerene_cut_5
+   subroutine test_distance_feo2_cut_5(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 5.0_wp
+      real(wp), allocatable :: trans(:, :)
+
+      call get_structure(mol, "feo2")
+      call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans)
+
+      call test_distance(error, mol, cutoff, trans=trans, cmp=.false.)
+
+   end subroutine test_distance_feo2_cut_5
    subroutine test_list_water(error)
 
       !> Error handling
@@ -526,7 +618,6 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_water
-
    subroutine test_list_methane(error)
 
       !> Error handling
@@ -550,7 +641,6 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_methane
-
    subroutine test_list_fullerene(error)
 
       !> Error handling
@@ -568,226 +658,6 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_fullerene
-
-   subroutine test_distance_fullerene_cut_5(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 5.0_wp
-      real(wp), allocatable :: trans(:, :)
-
-      allocate(trans(3, 1))
-      trans = 0.0_wp
-
-      call get_structure(mol, "fullerene")
-
-      call test_distance(error, mol, cutoff, trans=trans, cmp=.false.)
-
-   end subroutine test_distance_fullerene_cut_5
-
-   subroutine test_list_mb01(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 29.0_wp
-      real(wp), allocatable :: trans(:, :)
-
-      allocate(trans(3, 1))
-      trans = 0.0_wp
-
-      call get_structure(mol, "mindless01")
-
-      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
-
-   end subroutine test_list_mb01
-
-   subroutine test_list_mb02(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 29.0_wp
-      real(wp), allocatable :: trans(:, :)
-
-      allocate(trans(3, 1))
-      trans = 0.0_wp
-
-      call get_structure(mol, "mindless02")
-
-      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
-
-   end subroutine test_list_mb02
-
-   subroutine test_list_water_complete(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 29.0_wp
-      real(wp), allocatable :: trans(:, :)
-
-      allocate(trans(3, 1))
-      trans = 0.0_wp
-
-      call get_structure(mol, "water")
-
-      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
-
-   end subroutine test_list_water_complete
-
-   subroutine test_list_methane_complete(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 29.0_wp
-      real(wp), allocatable :: trans(:, :)
-
-      allocate(trans(3, 1))
-      trans = 0.0_wp
-
-      call get_structure(mol, "methane")
-
-      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
-
-   end subroutine test_list_methane_complete
-
-   subroutine test_list_fullerene_complete(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 29.0_wp
-      real(wp), allocatable :: trans(:, :)
-
-      allocate(trans(3, 1))
-      trans = 0.0_wp
-
-      call get_structure(mol, "fullerene")
-
-      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
-
-   end subroutine test_list_fullerene_complete
-
-   subroutine test_list_mb09_complete(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 29.0_wp
-      real(wp), allocatable :: trans(:, :)
-
-      allocate(trans(3, 1))
-      trans = 0.0_wp
-
-      call get_structure(mol, "mindless09")
-
-      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
-
-   end subroutine test_list_mb09_complete
-
-   subroutine test_list_mb10_complete(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 29.0_wp
-      real(wp), allocatable :: trans(:, :)
-
-      allocate(trans(3, 1))
-      trans = 0.0_wp
-
-      call get_structure(mol, "mindless10")
-
-      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
-
-   end subroutine test_list_mb10_complete
-
-   subroutine test_grid_nacl(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      !> Reference linked-cell grid dimensions
-      integer, parameter :: ref_nxyz(3) = [ 1, 1, 1 ]
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 29.0_wp
-      real(wp), allocatable :: trans(:, :)
-
-      call get_structure(mol, "nacl")
-      call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans)
-
-      call test_grid_gen(error, mol, cutoff, ref_nxyz)
-
-   end subroutine test_grid_nacl
-
-   subroutine test_grid_feo2(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      !> Reference linked-cell grid dimensions
-      integer, parameter :: ref_nxyz(3) = [ 1, 1, 1 ]
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 29.0_wp
-      real(wp), allocatable :: trans(:, :)
-
-      call get_structure(mol, "feo2")
-      call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans)
-
-      call test_grid_gen(error, mol, cutoff, ref_nxyz)
-
-   end subroutine test_grid_feo2
-
-   subroutine test_grid_x02_114(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      !> Reference linked-cell grid dimensions
-      integer, parameter :: ref_nxyz(3) = [ 1, 1, 3 ]
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 29.0_wp
-      real(wp), allocatable :: trans(:, :)
-      integer, parameter :: supercell(*) = [1, 1, 4]
-
-      call get_structure(mol, "x02")
-      call make_supercell(mol, supercell)
-      call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans)
-
-      call test_grid_gen(error, mol, cutoff, ref_nxyz)
-
-   end subroutine test_grid_x02_114
-
-   subroutine test_distance_feo2_cut_5(error)
-
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
-
-      type(structure_type) :: mol
-      real(wp), parameter :: cutoff = 5.0_wp
-      real(wp), allocatable :: trans(:, :)
-
-      call get_structure(mol, "feo2")
-      call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans)
-
-      call test_distance(error, mol, cutoff, trans=trans, cmp=.false.)
-
-   end subroutine test_distance_feo2_cut_5
-
    subroutine test_list_nacl(error)
 
       !> Error handling
@@ -803,7 +673,6 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_nacl
-
    subroutine test_list_feo2(error)
 
       !> Error handling
@@ -819,7 +688,6 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_feo2
-
    subroutine test_list_x01(error)
 
       !> Error handling
@@ -835,7 +703,6 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_x01
-
    subroutine test_list_x02(error)
 
       !> Error handling
@@ -851,7 +718,6 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_x02
-
    subroutine test_list_x02_114(error)
 
       !> Error handling
@@ -869,7 +735,125 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_x02_114
+   subroutine test_list_mb01(error)
 
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 29.0_wp
+      real(wp), allocatable :: trans(:, :)
+
+      allocate(trans(3, 1))
+      trans = 0.0_wp
+
+      call get_structure(mol, "mindless01")
+
+      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
+
+   end subroutine test_list_mb01
+   subroutine test_list_mb02(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 29.0_wp
+      real(wp), allocatable :: trans(:, :)
+
+      allocate(trans(3, 1))
+      trans = 0.0_wp
+
+      call get_structure(mol, "mindless02")
+
+      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
+
+   end subroutine test_list_mb02
+   subroutine test_list_water_complete(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 29.0_wp
+      real(wp), allocatable :: trans(:, :)
+
+      allocate(trans(3, 1))
+      trans = 0.0_wp
+
+      call get_structure(mol, "water")
+
+      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
+
+   end subroutine test_list_water_complete
+   subroutine test_list_methane_complete(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 29.0_wp
+      real(wp), allocatable :: trans(:, :)
+
+      allocate(trans(3, 1))
+      trans = 0.0_wp
+
+      call get_structure(mol, "methane")
+
+      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
+
+   end subroutine test_list_methane_complete
+   subroutine test_list_fullerene_complete(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 29.0_wp
+      real(wp), allocatable :: trans(:, :)
+
+      allocate(trans(3, 1))
+      trans = 0.0_wp
+
+      call get_structure(mol, "fullerene")
+
+      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
+
+   end subroutine test_list_fullerene_complete
+   subroutine test_list_mb09_complete(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 29.0_wp
+      real(wp), allocatable :: trans(:, :)
+
+      allocate(trans(3, 1))
+      trans = 0.0_wp
+
+      call get_structure(mol, "mindless09")
+
+      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
+
+   end subroutine test_list_mb09_complete
+   subroutine test_list_mb10_complete(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      real(wp), parameter :: cutoff = 29.0_wp
+      real(wp), allocatable :: trans(:, :)
+
+      allocate(trans(3, 1))
+      trans = 0.0_wp
+
+      call get_structure(mol, "mindless10")
+
+      call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
+
+   end subroutine test_list_mb10_complete
    subroutine test_list_nacl_complete(error)
 
       !> Error handling
@@ -885,7 +869,6 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_nacl_complete
-
    subroutine test_list_feo2_complete(error)
 
       !> Error handling
@@ -901,7 +884,6 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_feo2_complete
-
    subroutine test_list_x04_complete(error)
 
       !> Error handling
@@ -917,7 +899,6 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_x04_complete
-
    subroutine test_list_x05_complete(error)
 
       !> Error handling
@@ -933,7 +914,6 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_x05_complete
-
    subroutine test_nacl_wsc(error)
       !> Error handling
       type(error_type), allocatable, intent(out) :: error
@@ -950,7 +930,6 @@ contains
       call test_wsc(error, mol, cutoff, .false., ref_list, ref_nimg)
 
    end subroutine test_nacl_wsc
-
    subroutine test_feo2_wsc(error)
       !> Error handling
       type(error_type), allocatable, intent(out) :: error
@@ -968,7 +947,6 @@ contains
 
 
    end subroutine test_feo2_wsc
-
    subroutine test_spmv_mcharge(error)
 
       !> Error handling
@@ -1021,7 +999,6 @@ contains
       end if
 
    end subroutine test_spmv_mcharge
-
    subroutine test_spmv_csr(error)
 
       !> Error handling
@@ -1070,7 +1047,6 @@ contains
       end if
 
    end subroutine test_spmv_csr
-
    subroutine test_spmv_csr_complete(error)
 
       !> Error handling
@@ -1122,7 +1098,6 @@ contains
       end if
 
    end subroutine test_spmv_csr_complete
-
    subroutine test_spmv_fullmat(error)
 
       !> Error handling
