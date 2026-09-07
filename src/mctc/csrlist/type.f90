@@ -62,51 +62,54 @@ module mctc_csrlist_type
 
    public :: csr_list, new_csr_list, compute_grid, get_linked_cell
 
-   !> Universal thread-local dynamic storage buffer for neighbourlist construction
-   type :: thread_buf_type
+   !> @class csr_list
+   !> Neighbourlist in CSR format
+   type :: csr_list
 
-      !> Allocated capacity of pair-indexed arrays
-      integer(int64) :: capacity = 0_int64
+      !> Realspace cutoff for neighbourlist generation
+      real(wp), allocatable :: cutoff
 
-      !> Allocated capacity of the translation-index array
-      integer(int64) :: cap_tr = 0_int64
+      !> Complete asymmetric neighbour list flag
+      logical :: complete
 
-      !> Neighbour atom indices
+      !> Offset index in the neighbour map
+      integer, allocatable :: inl(:)
+
+      !> Number of neighbours for each atom
+      integer, allocatable :: nnl(:)
+
+      !> Index of the neighbouring atom
       integer, allocatable :: nlat(:)
 
-      !> Neighbour translation indices
+      !> Cell index of the neighbouring atom
       integer, allocatable :: nltr(:)
 
+      !> Lattice translation vector
+      real(wp), allocatable :: trans(:, :)
+
+      !> Wigner-Seitz cell type
+      type(wignerseitz_cell), allocatable :: wsc
+   end type csr_list
+
+   !> Universal thread-local dynamic storage buffer for neighbourlist construction
+   type :: thread_buf_type
+      !> Allocated capacity of pair-indexed arrays
+      integer(int64) :: capacity = 0_int64
+      !> Allocated capacity of the translation-index array
+      integer(int64) :: cap_tr = 0_int64
+      !> Neighbour atom indices
+      integer, allocatable :: nlat(:)
+      !> Neighbour translation indices
+      integer, allocatable :: nltr(:)
       !> Number of Wigner-Seitz images per neighbour
       integer, allocatable :: nimg(:)
-
       !> Offset into the Wigner-Seitz image index array
       integer, allocatable :: itr(:)
-
       !> Wigner-Seitz image indices
       integer, allocatable :: tridx(:)
    end type thread_buf_type
 
-   !> @class csr_list
-   !> Neighbourlist in CSR format
-   type :: csr_list
-      !> Realspace cutoff for neighbourlist generation
-      real(wp), allocatable :: cutoff
-      !> Complete asymmetric neighbour list flag
-      logical :: complete
-      !> Offset index in the neighbour map
-      integer, allocatable :: inl(:)
-      !> Number of neighbours for each atom
-      integer, allocatable :: nnl(:)
-      !> Index of the neighbouring atom
-      integer, allocatable :: nlat(:)
-      !> Cell index of the neighbouring atom
-      integer, allocatable :: nltr(:)
-      !> Lattice translation vector
-      real(wp), allocatable :: trans(:, :)
-      !> Wigner-Seitz cell type
-      type(wignerseitz_cell), allocatable :: wsc
-   end type csr_list
+
 
    !> Default real-space cutoff
    real(wp), parameter :: cutoff_def = 29.0_wp
@@ -321,7 +324,7 @@ contains
 
       allocate(thr_img(nthr), source=0)
 
-      thr_mem = max(int(init_size * mol%nat, int64), &
+      thr_mem = max(int(init_size * mol%nat, int64) / int(nthr, int64), &
       & int(real((prob * mol%nat), wp) / real(nthr, wp), int64))
       thr_mem = max(100_int64, thr_mem)
 
@@ -601,8 +604,9 @@ contains
       prob = ceiling(dens * self%cutoff**3.0_wp * 4.0_wp)
       if (self%complete) prob = prob * 2
 
-      thr_mem = max(init_size * mol%nat, &
+      thr_mem = max(int(init_size * mol%nat, int64) / int(nthr, int64), &
       & int(real((prob * mol%nat), wp) / real(nthr, wp), int64))
+      thr_mem = max(100_int64, thr_mem)
       thr_maxtr = thr_mem * 6
 
       ! Allocate thread metrics
