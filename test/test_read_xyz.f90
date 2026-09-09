@@ -13,9 +13,11 @@
 ! limitations under the License.
 
 module test_read_xyz
+   use mctc_env_accuracy, only : wp
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, check
-   use mctc_io_read_xyz
-   use mctc_io_structure
+   use mctc_io_convert, only : aatoau
+   use mctc_io_read_xyz, only : read_xyz
+   use mctc_io_structure, only : structure_type
    implicit none
    private
 
@@ -37,6 +39,20 @@ subroutine collect_read_xyz(testsuite)
       & new_unittest("valid3-xyz", test_valid3_xyz), &
       & new_unittest("valid4-xyz", test_valid4_xyz), &
       & new_unittest("valid5-xyz", test_valid5_xyz), &
+      & new_unittest("valid6-extxyz", test_valid6_extxyz), &
+      & new_unittest("valid7-extxyz", test_valid7_extxyz), &
+      & new_unittest("invalid1-extxyz", test_invalid1_extxyz, should_fail=.true.), &
+      & new_unittest("invalid2-extxyz", test_invalid2_extxyz, should_fail=.true.), &
+      & new_unittest("invalid3-extxyz", test_invalid3_extxyz, should_fail=.true.), &
+      & new_unittest("invalid4-extxyz", test_invalid4_extxyz, should_fail=.true.), &
+      & new_unittest("invalid5-extxyz", test_invalid5_extxyz, should_fail=.true.), &
+      & new_unittest("invalid6-extxyz", test_invalid6_extxyz, should_fail=.true.), &
+      & new_unittest("invalid7-extxyz", test_invalid7_extxyz, should_fail=.true.), &
+      & new_unittest("invalid8-extxyz", test_invalid8_extxyz, should_fail=.true.), &
+      & new_unittest("invalid9-extxyz", test_invalid9_extxyz, should_fail=.true.), &
+      & new_unittest("invalid10-extxyz", test_invalid10_extxyz, should_fail=.true.), &
+      & new_unittest("invalid11-extxyz", test_invalid11_extxyz, should_fail=.true.), &
+      & new_unittest("invalid12-extxyz", test_invalid12_extxyz, should_fail=.true.), &
       & new_unittest("invalid1-xyz", test_invalid1_xyz, should_fail=.true.), &
       & new_unittest("invalid2-xyz", test_invalid2_xyz, should_fail=.true.), &
       & new_unittest("invalid3-xyz", test_invalid3_xyz, should_fail=.true.), &
@@ -57,8 +73,8 @@ subroutine test_valid1_xyz(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "9", &
       "WATER27, (H2O)3", &
       "O     1.1847029    1.1150792   -0.0344641 ", &
@@ -96,8 +112,8 @@ subroutine test_valid2_xyz(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "24", &
       "", &
       "C          1.07317        0.04885       -0.07573", &
@@ -148,8 +164,8 @@ subroutine test_valid3_xyz(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "24", &
       "#", &
       "c  1.07317  0.04885 -0.07573 -0.05445590", &
@@ -198,8 +214,8 @@ subroutine test_valid4_xyz(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "3", &
       "WATER27, H2O", &
       "O     1.1847029    1.1150792   -0.0344641 ", &
@@ -240,8 +256,8 @@ subroutine test_valid5_xyz(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "3", &
       "WATER27, H2O", &
       "8     1.1847029    1.1150792   -0.0344641 ", &
@@ -277,8 +293,8 @@ subroutine test_invalid1_xyz(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "9", &
       "WATER27, (H2O)3", &
       "O     1.1847029    1.1150792   -0.0344641 ", &
@@ -304,8 +320,8 @@ subroutine test_invalid2_xyz(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "", &
       "WATER27, (H2O)3", &
       "O     1.1847029    1.1150792   -0.0344641 ", &
@@ -334,8 +350,8 @@ subroutine test_invalid3_xyz(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       & "120"
    rewind(unit)
 
@@ -354,8 +370,8 @@ subroutine test_invalid4_xyz(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "-3", &
       "H2O", &
       "O     1.1847029    1.1150792   -0.0344641 ", &
@@ -378,8 +394,8 @@ subroutine test_invalid5_xyz(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "3", &
       "H2O", &
       "****o   1.1847029    1.1150792   -0.0344641 ", &
@@ -402,8 +418,8 @@ subroutine test_invalid6_xyz(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "3", &
       "H2O", &
       "1.1847029    1.1150792   -0.0344641      O", &
@@ -426,8 +442,8 @@ subroutine test_invalid7_xyz(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "nine", &
       "WATER27, (H2O)3", &
       "O     1.1847029    1.1150792   -0.0344641 ", &
@@ -445,6 +461,243 @@ subroutine test_invalid7_xyz(error)
    close(unit)
 
 end subroutine test_invalid7_xyz
+
+
+subroutine test_valid6_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: struc
+   integer :: unit
+   real(wp), parameter :: lattice_ref(3, 3) = reshape([ &
+      & 5.0_wp, 0.0_wp, 0.0_wp, &
+      & 0.0_wp, 6.0_wp, 0.0_wp, &
+      & 0.0_wp, 0.0_wp, 7.0_wp], [3, 3]) * aatoau
+
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
+      "2", &
+      'Lattice="5.0 0.0 0.0 0.0 6.0 0.0 0.0 0.0 7.0" '// &
+      & 'Properties=forces:R:3:species:S:1:pos:R:3 energy=-1.2 pbc="T F T" '// &
+      & 'comment="periodic test"', &
+      "0.1 0.2 0.3 H 1.0 2.0 3.0", &
+      "0.4 0.5 0.6 O 4.0 5.0 6.0"
+   rewind(unit)
+
+   call read_xyz(struc, unit, error)
+   close(unit)
+   if (allocated(error)) return
+
+   call check(error, struc%nat, 2, "Number of atoms does not match")
+   if (allocated(error)) return
+   call check(error, count(struc%periodic), 2, "Periodicity does not match")
+   if (allocated(error)) return
+   call check(error, maxval(abs(struc%lattice-lattice_ref)), 0.0_wp, &
+      & "Lattice does not match", thr=1.0e-12_wp)
+   if (allocated(error)) return
+   call check(error, maxval(abs(struc%xyz(:, 1)-[1.0_wp, 2.0_wp, 3.0_wp]*aatoau)), &
+      & 0.0_wp, "Coordinates do not match", thr=1.0e-12_wp)
+   if (allocated(error)) return
+   call check(error, struc%comment, "periodic test")
+
+end subroutine test_valid6_extxyz
+
+
+subroutine test_valid7_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: struc
+   integer :: unit
+
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
+      "2", &
+      "Properties=pos:R:3:Z:I:1 pbc=[F,F,F]", &
+      "1.0 2.0 3.0 1", &
+      "4.0 5.0 6.0 8"
+   rewind(unit)
+
+   call read_xyz(struc, unit, error)
+   close(unit)
+   if (allocated(error)) return
+
+   call check(error, struc%nat, 2, "Number of atoms does not match")
+   if (allocated(error)) return
+   call check(error, struc%nid, 2, "Number of species does not match")
+   if (allocated(error)) return
+   call check(error, count(struc%periodic), 0, "Periodicity does not match")
+   if (allocated(error)) return
+   call check(error, struc%sym(struc%id(1)), "H")
+   if (allocated(error)) return
+   call check(error, struc%sym(struc%id(2)), "O")
+
+end subroutine test_valid7_extxyz
+
+
+subroutine test_invalid1_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   call check_invalid_extxyz(error, &
+      & 'Properties=species:S:1:pos:R:3 Lattice="1.0 0.0"', &
+      & "H 0.0 0.0 0.0")
+
+end subroutine test_invalid1_extxyz
+
+
+subroutine test_invalid2_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   call check_invalid_extxyz(error, &
+      & 'Properties=species:S:1:pos:R:3 pbc="T F"', &
+      & "H 0.0 0.0 0.0")
+
+end subroutine test_invalid2_extxyz
+
+
+subroutine test_invalid3_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   call check_invalid_extxyz(error, &
+      & 'Properties=species:S:1:pos:R:3 comment="unterminated', &
+      & "H 0.0 0.0 0.0")
+
+end subroutine test_invalid3_extxyz
+
+
+subroutine test_invalid4_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   call check_invalid_extxyz(error, &
+      & "Properties=species:S:1:pos:R", &
+      & "H 0.0 0.0 0.0")
+
+end subroutine test_invalid4_extxyz
+
+
+subroutine test_invalid5_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   call check_invalid_extxyz(error, &
+      & "Properties=species:R:1:pos:R:3", &
+      & "H 0.0 0.0 0.0")
+
+end subroutine test_invalid5_extxyz
+
+
+subroutine test_invalid6_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   call check_invalid_extxyz(error, &
+      & "Properties=species:S:1:pos:R:2", &
+      & "H 0.0 0.0")
+
+end subroutine test_invalid6_extxyz
+
+
+subroutine test_invalid7_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   call check_invalid_extxyz(error, &
+      & "Properties=pos:R:3", &
+      & "0.0 0.0 0.0")
+
+end subroutine test_invalid7_extxyz
+
+
+subroutine test_invalid8_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   call check_invalid_extxyz(error, &
+      & "Properties=species:S:1", &
+      & "H")
+
+end subroutine test_invalid8_extxyz
+
+
+subroutine test_invalid9_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   call check_invalid_extxyz(error, &
+      & "Properties=species:S:1:pos:R:3", &
+      & "H 0.0 0.0")
+
+end subroutine test_invalid9_extxyz
+
+
+subroutine test_invalid10_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   call check_invalid_extxyz(error, &
+      & "Properties=species:S:1:pos:R:3", &
+      & "H 0.0 0.0 0.0 extra")
+
+end subroutine test_invalid10_extxyz
+
+
+subroutine test_invalid11_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   call check_invalid_extxyz(error, &
+      & "Properties=species:S:1:pos:R:3", &
+      & "H invalid 0.0 0.0")
+
+end subroutine test_invalid11_extxyz
+
+
+subroutine test_invalid12_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   call check_invalid_extxyz(error, &
+      & "Properties=Z:I:1:pos:R:3", &
+      & "0 0.0 0.0 0.0")
+
+end subroutine test_invalid12_extxyz
+
+
+subroutine check_invalid_extxyz(error, header, atom)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   character(len=*), intent(in) :: header, atom
+   type(structure_type) :: struc
+   integer :: unit
+
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") "1", header, atom
+   rewind(unit)
+
+   call read_xyz(struc, unit, error)
+   close(unit)
+
+end subroutine check_invalid_extxyz
 
 
 end module test_read_xyz

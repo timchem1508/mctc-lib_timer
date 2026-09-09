@@ -60,7 +60,7 @@ subroutine getline(unit, line, iostat, iomsg)
    integer, intent(out) :: iostat
 
    !> Error message
-   character(len=:), allocatable, optional :: iomsg
+   character(len=:), allocatable, intent(out), optional :: iomsg
 
    integer, parameter :: bufsize = 512
    character(len=bufsize) :: buffer
@@ -70,7 +70,7 @@ subroutine getline(unit, line, iostat, iomsg)
 
    allocate(character(len=0) :: line)
    do
-      read(unit, '(a)', advance='no', iostat=stat, iomsg=msg, size=size) &
+      read(unit, "(a)", advance="no", iostat=stat, iomsg=msg, size=size) &
          & buffer
       if (stat > 0) exit
       line = line // buffer(:size)
@@ -109,7 +109,7 @@ subroutine next_line(unit, line, pos, lnum, iostat, iomsg)
    integer, intent(out) :: iostat
 
    !> Error message
-   character(len=:), allocatable, optional :: iomsg
+   character(len=:), allocatable, intent(out), optional :: iomsg
 
    pos = 0
    call getline(unit, line, iostat, iomsg)
@@ -178,7 +178,7 @@ function filename(unit)
          filename = trim(buffer)
       end if
    end if
-end function
+end function filename
 
 
 !> Create new IO error
@@ -205,7 +205,7 @@ subroutine io_error(error, message, source, token, filename, line, label)
    !> Label of the offending statement
    character(len=*), intent(in), optional :: label
 
-   character(len=*), parameter :: nl = new_line('a')
+   character(len=*), parameter :: nl = new_line("a")
    integer :: offset, lnum, width
    character(len=:), allocatable :: string
 
@@ -216,7 +216,7 @@ subroutine io_error(error, message, source, token, filename, line, label)
 
    ! Fix print alignment for empty files
    if (offset == 0) offset = 1
-   
+
    string = "Error: " // message
 
    if (present(filename)) then
@@ -272,7 +272,7 @@ subroutine io2_error(error, message, source1, source2, token1, token2, filename,
    !> Label of the offending statement
    character(len=*), intent(in), optional :: label1, label2
 
-   character(len=*), parameter :: nl = new_line('a')
+   character(len=*), parameter :: nl = new_line("a")
    integer :: offset, lnum1, lnum2, width1, width2
    character(len=:), allocatable :: string
 
@@ -371,7 +371,7 @@ pure function to_string(val, width) result(string)
    end do
    if (val < 0) then
       pos = pos - 1
-      buffer(pos:pos) = '-'
+      buffer(pos:pos) = "-"
    end if
 
    if (present(width)) then
@@ -405,7 +405,9 @@ subroutine read_token_int(line, token, val, iostat, iomsg)
    character(len=512) :: msg
 
    if (token%first > 0 .and. token%last <= len(line)) then
+      val = 0
       read(line(token%first:token%last), *, iostat=iostat, iomsg=msg) val
+      if (iostat /= 0) val = 0
    else
       iostat = 1
       msg = "No input found"
@@ -437,7 +439,9 @@ subroutine read_token_real(line, token, val, iostat, iomsg)
    character(len=512) :: msg
 
    if (token%first > 0 .and. token%last <= len(line)) then
+      val = 0.0_wp
       read(line(token%first:token%last), *, iostat=iostat, iomsg=msg) val
+      if (iostat /= 0) val = 0.0_wp
    else
       iostat = 1
       msg = "No input found"
@@ -456,7 +460,7 @@ elemental function to_lower(str) result(lcstr)
    character(len=len(str)):: lcstr
 
    integer :: ilen, iquote, i, iav, iqc
-   integer, parameter :: offset = iachar('A') - iachar('a')
+   integer, parameter :: offset = iachar("A") - iachar("a")
 
    ilen = len(str)
    iquote = 0
@@ -474,7 +478,7 @@ elemental function to_lower(str) result(lcstr)
          cycle
       end if
       if (iquote == 1) cycle
-      if (iav >= iachar('A') .and. iav <= iachar('Z')) then
+      if (iav >= iachar("A") .and. iav <= iachar("Z")) then
          lcstr(i:i) = achar(iav - offset)
       else
          lcstr(i:i) = str(i:i)

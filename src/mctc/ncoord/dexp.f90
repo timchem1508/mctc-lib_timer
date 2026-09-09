@@ -14,25 +14,27 @@
 
 !> Coordination number implementation using a double exponential counting function as in GFN2-xTB
 module mctc_ncoord_dexp
+   use mctc_data_covrad, only : get_covalent_rad
    use mctc_env, only : wp
    use mctc_io, only : structure_type
-   use mctc_data_covrad, only : get_covalent_rad
    use mctc_ncoord_type, only : ncoord_type
    implicit none
    private
 
    public :: new_dexp_ncoord
-   
+
 
    !> Coordination number evaluator
    type, public, extends(ncoord_type) :: dexp_ncoord_type
       !> Covalent radii
       real(wp), allocatable :: rcov(:)
    contains
-      !> Evaluates the dexp counting function 
+      !> Evaluates the dexp counting function
       procedure :: ncoord_count
       !> Evaluates the derivative of the dexp counting function
       procedure :: ncoord_dcount
+      !> Evaluates the second derivative of the dexp counting function
+      procedure :: ncoord_d2count
    end type dexp_ncoord_type
 
    !> Steepness of first counting function
@@ -72,7 +74,7 @@ subroutine new_dexp_ncoord(self, mol, cutoff, rcov, cut)
    else
       self%rcov(:) = get_covalent_rad(mol%num)
    end if
-   
+
    self%directed_factor = 1.0_wp
 
    if (present(cut)) then
@@ -116,13 +118,34 @@ elemental function ncoord_dcount(self, izp, jzp, r) result(count)
    real(wp), intent(in) :: r
 
    real(wp) :: rc, count
-   
+
    rc = self%rcov(izp) + self%rcov(jzp)
 
    count = (exp_dcount(ka, r, rc) * exp_count(kb, r, rc + r_shift) &
                & + exp_count(ka, r, rc) * exp_dcount(kb, r, rc + r_shift))
 
 end function ncoord_dcount
+
+!> Second derivative of the double-exponential counting function w.r.t. the distance.
+elemental function ncoord_d2count(self, izp, jzp, r) result(count)
+   !> Coordination number container
+   class(dexp_ncoord_type), intent(in) :: self
+   !> Atom i index
+   integer, intent(in) :: izp
+   !> Atom j index
+   integer, intent(in) :: jzp
+   !> Current distance.
+   real(wp), intent(in) :: r
+
+   real(wp) :: rc, count
+
+   rc = self%rcov(izp) + self%rcov(jzp)
+
+   count = exp_d2count(ka, r, rc)*exp_count(kb, r, rc + r_shift) &
+      & + 2.0_wp*exp_dcount(ka, r, rc)*exp_dcount(kb, r, rc + r_shift) &
+      & + exp_count(ka, r, rc)*exp_d2count(kb, r, rc + r_shift)
+
+end function ncoord_d2count
 
 
 !> Mono-exponential counting function for coordination number contributions.
@@ -156,5 +179,24 @@ elemental function exp_dcount(k, r, r0) result(count)
    count = (-k*r0*expterm)/(r**2.0_wp*((expterm+1.0_wp)**2.0_wp))
 
 end function exp_dcount
+
+!> Second derivative of the mono-exponential counting function w.r.t. the distance.
+elemental function exp_d2count(k, r, r0) result(count)
+   !> Steepness of the counting function.
+   real(wp), intent(in) :: k
+   !> Current distance.
+   real(wp), intent(in) :: r
+   !> Cutoff radius.
+   real(wp), intent(in) :: r0
+
+   real(wp) :: count, cf, tmp
+
+   cf = exp_count(k, r, r0)
+   tmp = cf*(1.0_wp - cf)
+
+   count = tmp*(1.0_wp - 2.0_wp*cf)*(k*r0)**2/r**4 &
+      & + 2.0_wp*tmp*k*r0/r**3
+
+end function exp_d2count
 
 end module mctc_ncoord_dexp

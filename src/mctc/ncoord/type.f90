@@ -14,9 +14,9 @@
 
 !> Declaration of base class for coordination number evalulations
 module mctc_ncoord_type
+   use mctc_cutoff, only : get_lattice_points
    use mctc_env, only : wp
    use mctc_io, only : structure_type
-   use mctc_cutoff, only : get_lattice_points
 
    implicit none
    private
@@ -26,7 +26,7 @@ module mctc_ncoord_type
       !> Radial cutoff for the coordination number
       real(wp)  :: cutoff
       !> Steepness of counting function
-      real(wp)  :: kcn 
+      real(wp)  :: kcn
       !> Factor determining whether the CN is evaluated with direction
       !> if +1 the CN contribution is added equally to both partners
       !> if -1 (i.e. with the EN-dep.) it is added to one and subtracted from the other
@@ -46,10 +46,15 @@ module mctc_ncoord_type
       procedure :: get_en_factor
       !> Add CN derivative of an arbitrary function
       procedure :: add_coordination_number_derivs
+      !> Add dE/dCN contracted with the Cartesian CN Hessian
+      procedure :: add_coordination_number_hessian
       !> Evaluates the counting function (exp, dexp, erf, ...)
       procedure(ncoord_count),  deferred :: ncoord_count
       !> Evaluates the derivative of the counting function (exp, dexp, erf, ...)
       procedure(ncoord_dcount), deferred :: ncoord_dcount
+      !> Evaluates the second derivative of the counting function
+      !> Analytic implementations can override the numerical fallback.
+      procedure :: ncoord_d2count
    end type ncoord_type
 
    abstract interface
@@ -87,6 +92,29 @@ module mctc_ncoord_type
    end interface
 
 contains
+
+   !> Numerical fallback for the second derivative of the counting function
+   !> w.r.t. the distance. Built-in counting functions override this routine
+   !> with analytic expressions.
+   elemental function ncoord_d2count(self, izp, jzp, r) result(count)
+      !> Instance of coordination number container
+      class(ncoord_type), intent(in) :: self
+      !> Atom i index
+      integer, intent(in) :: izp
+      !> Atom j index
+      integer, intent(in) :: jzp
+      !> Current distance
+      real(wp), intent(in) :: r
+
+      real(wp) :: count, step
+      real(wp), parameter :: eps = epsilon(1.0_wp)**(1.0_wp/3.0_wp)
+
+      step = min(0.5_wp*r, eps*max(abs(r), 1.0_wp))
+      count = (self%ncoord_dcount(izp, jzp, r + step) &
+         & - self%ncoord_dcount(izp, jzp, r - step))/(2.0_wp*step)
+
+   end function ncoord_d2count
+
 
    !> Wrapper for CN using the CN cutoff for the lattice
    subroutine get_cn(self, mol, cn, dcndr, dcndL)
@@ -285,26 +313,26 @@ contains
 
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
-   
+
       !> Lattice points
       real(wp), intent(in) :: trans(:, :)
-   
+
       !> Derivative of expression with respect to the coordination number
       real(wp), intent(in) :: dEdcn(:)
-   
+
       !> Derivative of the CN with respect to the Cartesian coordinates
       real(wp), intent(inout) :: gradient(:, :)
-   
+
       !> Derivative of the CN with respect to strain deformations
       real(wp), intent(inout) :: sigma(:, :)
-   
+
       integer :: iat, jat, izp, jzp, itr
       real(wp) :: r2, r1, rij(3), countd(3), ds(3, 3), cutoff2, den
 
       ! Thread-private arrays for reduction
       ! Set to zero explicitly as the shared variants are potentially non-zero (inout)
       real(wp), allocatable :: gradient_local(:, :), sigma_local(:, :)
-   
+
       cutoff2 = self%cutoff**2
 
       !$omp parallel default(none) &
@@ -332,9 +360,9 @@ contains
                   & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
                gradient_local(:, jat) = gradient_local(:, jat) - countd &
                   & * (dEdcn(iat) + dEdcn(jat) * self%directed_factor)
-   
+
                ds = spread(countd, 1, 3) * spread(rij, 2, 3)
-   
+
                sigma_local(:, :) = sigma_local(:, :) &
                   & + ds * (dEdcn(iat) + &
                   & merge(dEdcn(jat) * self%directed_factor, 0.0_wp, jat /= iat))
@@ -352,6 +380,113 @@ contains
    end subroutine add_coordination_number_derivs
 
 
+   !> Add dE/dCN contracted with the Cartesian Hessian of the
+   !> coordination numbers.
+   !>
+   !> The derivative dEdcn is contracted directly with the second derivative
+   !> of the underlying pairwise coordination-number counting function.  As for
+   !> add_coordination_number_derivs, the optional post-processing controlled by
+   !> self%cut is not part of this contraction.
+   subroutine add_coordination_number_hessian(self, mol, trans, dEdcn, hessian)
+
+      !> Coordination number container
+      class(ncoord_type), intent(in) :: self
+
+      !> Molecular structure data
+      type(structure_type), intent(in) :: mol
+
+      !> Lattice points
+      real(wp), intent(in) :: trans(:, :)
+
+      !> Derivative of expression with respect to the coordination number
+      real(wp), intent(in) :: dEdcn(:)
+
+      !> Cartesian Hessian in flattened (3*nat, 3*nat) representation
+      real(wp), intent(inout) :: hessian(:, :)
+
+      integer :: ipair, npair, iat, jat, izp, jzp, itr
+      integer :: ic, jc, ii, jj
+      real(wp) :: r2, r1, rij(3), cutoff2, den, dEdcnij
+      real(wp) :: countd, countd2, block(3, 3), pair_block(3, 3)
+
+      ! Only diagonal Cartesian blocks receive contributions from more than one
+      ! unordered atom pair. Keep those thread-private and write off-diagonal
+      ! blocks directly from the thread owning the pair.
+      real(wp), allocatable :: diagonal_local(:, :, :)
+
+      cutoff2 = self%cutoff**2
+      npair = mol%nat*(mol%nat - 1)/2
+
+      !$omp parallel default(none) &
+      !$omp shared(self, mol, trans, cutoff2, dEdcn, hessian, npair) &
+      !$omp private(ipair, iat, jat, izp, jzp, itr, ic, jc, ii, jj, r2, r1, rij, &
+      !$omp& den, dEdcnij, countd, countd2, block, pair_block, diagonal_local)
+      allocate(diagonal_local(3, 3, mol%nat), source=0.0_wp)
+
+      !$omp do schedule(runtime)
+      do ipair = 1, npair
+         iat = int(0.5_wp*(1.0_wp + sqrt(8.0_wp*real(ipair, wp) + 1.0_wp)))
+         if (iat*(iat - 1)/2 < ipair) iat = iat + 1
+         jat = ipair - (iat - 1)*(iat - 2)/2
+
+         izp = mol%id(iat)
+         jzp = mol%id(jat)
+         den = self%get_en_factor(izp, jzp)
+         dEdcnij = dEdcn(iat) + dEdcn(jat)*self%directed_factor
+
+         pair_block(:, :) = 0.0_wp
+         do itr = 1, size(trans, dim=2)
+            rij = mol%xyz(:, iat) - (mol%xyz(:, jat) + trans(:, itr))
+            r2 = sum(rij**2)
+            if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
+            r1 = sqrt(r2)
+
+            countd = den*self%ncoord_dcount(izp, jzp, r1)
+            countd2 = den*self%ncoord_d2count(izp, jzp, r1)
+
+            do ic = 1, 3
+               do jc = 1, 3
+                  block(ic, jc) = dEdcnij * ( &
+                     & countd2*rij(ic)*rij(jc)/r2 &
+                     & - countd*rij(ic)*rij(jc)/(r2*r1))
+               end do
+               block(ic, ic) = block(ic, ic) + dEdcnij*countd/r1
+            end do
+            pair_block(:, :) = pair_block(:, :) + block(:, :)
+         end do
+
+         diagonal_local(:, :, iat) = diagonal_local(:, :, iat) + pair_block(:, :)
+         diagonal_local(:, :, jat) = diagonal_local(:, :, jat) + pair_block(:, :)
+
+         do ic = 1, 3
+            ii = 3*(iat - 1) + ic
+            do jc = 1, 3
+               jj = 3*(jat - 1) + jc
+               hessian(ii, jj) = hessian(ii, jj) - pair_block(ic, jc)
+               hessian(jj, ii) = hessian(jj, ii) - pair_block(jc, ic)
+            end do
+         end do
+      end do
+      !$omp end do nowait
+
+      !$omp critical (add_coordination_number_hessian_)
+      do iat = 1, mol%nat
+         do ic = 1, 3
+            ii = 3*(iat - 1) + ic
+            do jc = 1, 3
+               jj = 3*(iat - 1) + jc
+               hessian(ii, jj) = hessian(ii, jj) + diagonal_local(ic, jc, iat)
+            end do
+         end do
+      end do
+      !$omp end critical (add_coordination_number_hessian_)
+
+      deallocate(diagonal_local)
+      !$omp end parallel
+
+   end subroutine add_coordination_number_hessian
+
+
    !> Evaluates pairwise electronegativity factor if non applies
    elemental function get_en_factor(self, izp, jzp) result(en_factor)
       !> Coordination number container
@@ -364,7 +499,7 @@ contains
       real(wp) :: en_factor
 
       en_factor = 1.0_wp
-      
+
    end function get_en_factor
 
 
@@ -392,19 +527,19 @@ contains
          do iat = 1, size(cn)
             dcnpdcn = dlog_cn_cut(cn(iat), cn_max)
             dcndL(:, :, iat) = dcnpdcn*dcndL(:, :, iat)
-         enddo
-      endif
+         end do
+      end if
 
       if (present(dcndr)) then
          do iat = 1, size(cn)
             dcnpdcn = dlog_cn_cut(cn(iat), cn_max)
             dcndr(:, :, iat) = dcnpdcn*dcndr(:, :, iat)
-         enddo
-      endif
+         end do
+      end if
 
       do iat = 1, size(cn)
          cn(iat) = log_cn_cut(cn(iat), cn_max)
-      enddo
+      end do
 
    end subroutine cut_coordination_number
 

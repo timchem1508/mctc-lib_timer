@@ -21,10 +21,10 @@ module mctc_io_read
    use mctc_io_read_gaussian, only : read_gaussian_external
    use mctc_io_read_genformat, only : read_genformat
    use mctc_io_read_json, only : read_json
-   use mctc_io_read_qchem, only : read_qchem
-   use mctc_io_read_qcschema, only : read_qcschema
    use mctc_io_read_pdb, only : read_pdb
    use mctc_io_read_pymatgen, only : read_pymatgen
+   use mctc_io_read_qchem, only : read_qchem
+   use mctc_io_read_qcschema, only : read_qcschema
    use mctc_io_read_turbomole, only : read_coord
    use mctc_io_read_vasp, only : read_vasp
    use mctc_io_read_xyz, only : read_xyz
@@ -86,7 +86,7 @@ subroutine read_structure_from_file(self, file, error, format)
       return
    end if
 
-   open(file=file, newunit=unit, status='old', iostat=stat)
+   open(file=file, newunit=unit, status="old", iostat=stat)
    if (stat /= 0) then
       call fatal_error(error, "Cannot open '"//file//"'")
       return
@@ -143,7 +143,7 @@ subroutine get_structure_reader(reader, ftype)
    nullify(reader)
 
    select case(ftype)
-   case(filetype%xyz)
+   case(filetype%xyz, filetype%extxyz)
       reader => read_xyz
 
    case(filetype%molfile)
@@ -185,6 +185,8 @@ subroutine get_structure_reader(reader, ftype)
    case(filetype%json)
       reader => read_json
 
+   case default
+      nullify(reader)
    end select
 
 end subroutine get_structure_reader

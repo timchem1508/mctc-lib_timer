@@ -15,8 +15,8 @@
 module test_read_turbomole
    use mctc_env, only : wp
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, check
-   use mctc_io_read_turbomole
-   use mctc_io_structure
+   use mctc_io_read_turbomole, only : read_coord
+   use mctc_io_structure, only : structure_type
    implicit none
    private
 
@@ -59,7 +59,8 @@ subroutine collect_read_turbomole(testsuite)
       & new_unittest("invalid13-coord", test_invalid13_coord, should_fail=.true.), &
       & new_unittest("invalid14-coord", test_invalid14_coord, should_fail=.true.), &
       & new_unittest("invalid15-coord", test_invalid15_coord, should_fail=.true.), &
-      & new_unittest("invalid16-coord", test_invalid16_coord, should_fail=.true.) &
+      & new_unittest("invalid16-coord", test_invalid16_coord, should_fail=.true.), &
+      & new_unittest("invalid17-cell", test_invalid17_cell, should_fail=.true.) &
       & ]
 
 end subroutine collect_read_turbomole
@@ -73,8 +74,8 @@ subroutine test_valid1_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord angs", &
       " 1.1847029  1.1150792 -0.0344641 O", &
       " 0.4939088  0.9563767  0.6340089 H", &
@@ -108,8 +109,8 @@ subroutine test_valid2_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "    1.36794785746435     13.45808943446053      8.83754983226359      c", &
       "    3.69183290816438     13.13552229161569     10.16652201690950      c", &
@@ -170,8 +171,8 @@ subroutine test_valid3_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "   -0.12918412100093      0.06210659750976     -2.13384498734326  c", &
       "    0.12856915667443     -0.07403227791901      4.02358027265954  c", &
@@ -204,8 +205,8 @@ subroutine test_valid4_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$cell", &
       "  4.766080896955 4.766080896955 4.766080896955 60. 60. 60.", &
       "$coord", &
@@ -235,8 +236,8 @@ subroutine test_valid5_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord frac", &
       "    0.25000000000000      0.25000000000000      0.25000000000000      f", &
       "    0.75000000000000      0.75000000000000      0.75000000000000      f", &
@@ -270,8 +271,8 @@ subroutine test_valid6_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$cell", &
       " 9.09903133 9.09903130512 30.4604956 90.0 90.0 120.000000127", &
       "$coord", &
@@ -303,8 +304,8 @@ subroutine test_valid7_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "    2.82781861325240      2.96439280874170      3.12827803849279  o", &
       "    7.19124230791576      0.98723342603994      4.89004701836746  o", &
@@ -342,8 +343,8 @@ subroutine test_valid8_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "   -1.79537625851198     -3.77866422935275     -1.07883558363403      h", &
       "   -2.68278833302782      0.38892666265890      1.66214865238427      s", &
@@ -387,8 +388,8 @@ subroutine test_valid9_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "    4.82824919102333E-02    5.71831000079710E-02    1.73514614763116E-01      C", &
       "    4.82824919102333E-02    5.71831000079710E-02    2.78568246476372E+00      N", &
@@ -432,8 +433,8 @@ subroutine test_valid10_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$cell", &
       " 8.00000006 ", &
       "$periodic 1", &
@@ -488,8 +489,8 @@ subroutine test_valid11_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord frac", &
       "    0.00000000000000      0.00000000000000      0.00000000000000      mg", &
       "    0.50000000000000      0.00000000000000      0.00000000000000      o", &
@@ -528,8 +529,8 @@ subroutine test_invalid1_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$end"
    rewind(unit)
 
@@ -548,8 +549,8 @@ subroutine test_invalid2_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "    2.82781861325240      2.96439280874170      3.12827803849279  o", &
       "    7.19124230791576      0.98723342603994      4.89004701836746  o", &
@@ -579,8 +580,8 @@ subroutine test_invalid3_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "    2.82781861325240      2.96439280874170      3.12827803849279  o", &
       "    7.19124230791576      0.98723342603994      4.89004701836746  o", &
@@ -612,8 +613,8 @@ subroutine test_invalid4_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord angs", &
       "-1.1469443  0.0697649  1.1470196 --->o", &
       "-1.2798308 -0.5232169  1.8902833 H", &
@@ -636,8 +637,8 @@ subroutine test_invalid5_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord frac", &
       "    0.25000000000000      0.25000000000000      0.25000000000000      f", &
       "    0.75000000000000      0.75000000000000      0.75000000000000      f", &
@@ -665,8 +666,8 @@ subroutine test_invalid6_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord frac", &
       "    0.25000000000000      0.25000000000000      0.25000000000000      f", &
       "    0.75000000000000      0.75000000000000      0.75000000000000      f", &
@@ -690,8 +691,8 @@ subroutine test_invalid7_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "    1.36794785746435     13.45808943446053      8.83754983226359      c", &
       "    3.69183290816438     13.13552229161569     10.16652201690950      c", &
@@ -748,8 +749,8 @@ subroutine test_invalid8_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord angs", &
       " 1.1847029  1.1150792 -0.0344641 O", &
       " 0.4939088  0.9563767  0.6340089 H", &
@@ -778,8 +779,8 @@ subroutine test_invalid9_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$cell", &
       "  4.766080896955 4.766080896955 4.766080896955 60. 60. 60.", &
       "$coord", &
@@ -803,8 +804,8 @@ subroutine test_invalid10_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "    4.82824919102333E-02    5.71831000079710E-02    1.73514614763116E-01      C", &
       "    4.82824919102333E-02    5.71831000079710E-02    2.78568246476372E+00      N", &
@@ -840,8 +841,8 @@ subroutine test_invalid11_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "    4.82824919102333E-02    5.71831000079710E-02    1.73514614763116E-01      C", &
       "    4.82824919102333E-02    5.71831000079710E-02    2.78568246476372E+00      N", &
@@ -877,8 +878,8 @@ subroutine test_invalid12_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "   -0.12918412100093      0.06210659750976     -2.13384498734326  c", &
       "    0.12856915667443     -0.07403227791901      4.02358027265954  c", &
@@ -906,8 +907,8 @@ subroutine test_invalid13_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "   -0.12918412100093      0.06210659750976     -2.13384498734326  c", &
       "    0.12856915667443     -0.07403227791901      4.02358027265954  c", &
@@ -936,8 +937,8 @@ subroutine test_invalid14_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$coord", &
       "   -0.12918412100093      0.06210659750976     -2.13384498734326  c", &
       "    0.12856915667443     -0.07403227791901      4.02358027265954  c", &
@@ -965,8 +966,8 @@ subroutine test_invalid15_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$eht charge=0", &
       "$coord", &
       "   -0.12918412100093      0.06210659750976     -2.13384498734326  c", &
@@ -994,8 +995,8 @@ subroutine test_invalid16_coord(error)
    type(structure_type) :: struc
    integer :: unit
 
-   open(status='scratch', newunit=unit)
-   write(unit, '(a)') &
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
       "$lattice angs", &
       "       3.153833580475253       1.115048555743951       1.931320751454818", &
       "       0.000000000000000       3.345145667231851       1.931320751454818", &
@@ -1017,6 +1018,30 @@ subroutine test_invalid16_coord(error)
    close(unit)
 
 end subroutine test_invalid16_coord
+
+
+subroutine test_invalid17_cell(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: struc
+   integer :: unit
+
+   open(status="scratch", newunit=unit)
+   write(unit, "(a)") &
+      "$coord", &
+      " 0.0 0.0 0.0 H", &
+      "$periodic 1", &
+      "$cell", &
+      "not-a-cell", &
+      "$end"
+   rewind(unit)
+
+   call read_coord(struc, unit, error)
+   close(unit)
+
+end subroutine test_invalid17_cell
 
 
 end module test_read_turbomole

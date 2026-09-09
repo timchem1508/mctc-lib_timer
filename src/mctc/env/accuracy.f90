@@ -15,7 +15,9 @@
 !> Numerical storage size parameters for real and integer values
 module mctc_env_accuracy
    implicit none
-   public
+   private
+
+   public :: sp, dp, wp, i1, i2, i4, i8
 
    !> Single precision real numbers
    integer, parameter :: sp = selected_real_kind(6)

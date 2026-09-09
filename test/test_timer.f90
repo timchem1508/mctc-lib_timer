@@ -15,7 +15,7 @@
 module test_timer
    use mctc_env_accuracy, only : wp
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, check
-   use mctc_env_timer
+   use mctc_env_timer, only : timer_type, format_time
    implicit none
    private
 
@@ -43,7 +43,7 @@ subroutine test_format_time(error)
 
    t = 1.234_wp
    s = format_time(t)
-   expected = repeat(' ', 19) // "1.234 sec"
+   expected = repeat(" ", 19) // "1.234 sec"
 
    call check(error, s, expected)
 

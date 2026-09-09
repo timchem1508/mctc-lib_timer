@@ -46,6 +46,7 @@ module mctc_data
    use mctc_data_paulingen, only : get_pauling_en
    use mctc_data_vdwrad, only : get_vdw_rad
    implicit none
+   private
 
    public :: get_atomic_rad, get_covalent_rad, get_pauling_en, get_vdw_rad
 end module mctc_data

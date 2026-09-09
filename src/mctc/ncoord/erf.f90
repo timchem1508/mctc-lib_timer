@@ -14,10 +14,10 @@
 
 !> Coordination number implementation with single error function
 module mctc_ncoord_erf
+   use mctc_data_covrad, only : get_covalent_rad
    use mctc_env, only : wp
    use mctc_io, only : structure_type
    use mctc_io_constants, only : pi
-   use mctc_data_covrad, only : get_covalent_rad
    use mctc_ncoord_type, only : ncoord_type
    implicit none
    private
@@ -35,11 +35,13 @@ module mctc_ncoord_erf
       procedure :: ncoord_count
       !> Evaluates the derivative of the error counting function
       procedure :: ncoord_dcount
+      !> Evaluates the second derivative of the error counting function
+      procedure :: ncoord_d2count
    end type erf_ncoord_type
 
    !> Steepness of counting function
    real(wp), parameter :: default_kcn = 3.15_wp
-   !> Exponent of distance normalization 
+   !> Exponent of distance normalization
    real(wp), parameter :: default_norm_exp = 1.0_wp
    !> Real-space cutoff for coordination number
    real(wp), parameter :: default_cutoff = 25.0_wp
@@ -53,7 +55,7 @@ contains
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
       !> Steepness of counting function
-      real(wp), optional :: kcn
+      real(wp), intent(in), optional :: kcn
       !> Real space cutoff
       real(wp), intent(in), optional :: cutoff
       !> Covalent radii
@@ -112,11 +114,11 @@ contains
       real(wp), intent(in) :: r
 
       real(wp) :: rc, count
-      
+
       rc = (self%rcov(izp) + self%rcov(jzp))
 
       count = 0.5_wp * (1.0_wp + erf(-self%kcn*(r-rc)/rc**self%norm_exp))
-      
+
    end function ncoord_count
 
    !> Derivative of the error counting function w.r.t. the distance.
@@ -140,5 +142,29 @@ contains
       count = -(self%kcn*expterm)/(sqrtpi*rc**self%norm_exp)
 
    end function ncoord_dcount
+
+
+   !> Second derivative of the error counting function w.r.t. the distance.
+   elemental function ncoord_d2count(self, izp, jzp, r) result(count)
+      !> Coordination number container
+      class(erf_ncoord_type), intent(in) :: self
+      !> Atom i index
+      integer, intent(in) :: izp
+      !> Atom j index
+      integer, intent(in) :: jzp
+      !> Current distance.
+      real(wp), intent(in) :: r
+
+      real(wp), parameter :: sqrtpi = sqrt(pi)
+      real(wp) :: rc, exponent, expterm, count, rcn
+
+      rc = self%rcov(izp) + self%rcov(jzp)
+      rcn = rc**self%norm_exp
+
+      exponent = self%kcn*(r - rc)/rcn
+      expterm = exp(-exponent**2)
+      count = 2.0_wp*self%kcn**2*exponent*expterm/(sqrtpi*rcn**2)
+
+   end function ncoord_d2count
 
 end module mctc_ncoord_erf

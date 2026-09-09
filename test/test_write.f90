@@ -15,9 +15,9 @@
 module test_write
    use mctc_env_accuracy, only : wp
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, check
-   use mctc_io_write
-   use mctc_io_read
+   use mctc_io_read, only : read_structure
    use mctc_io_structure, only : structure_type
+   use mctc_io_write, only : write_structure
    use mctc_version, only : get_mctc_feature
    use testsuite_structure, only : get_structure
    implicit none
@@ -45,7 +45,8 @@ subroutine collect_write(testsuite)
       & new_unittest("valid-qcschema", test_qcschema, should_fail=.not.get_mctc_feature("json")), &
       & new_unittest("valid-vasp", test_vasp), &
       & new_unittest("valid-coord", test_coord), &
-      & new_unittest("valid-xyz", test_xyz) &
+      & new_unittest("valid-xyz", test_xyz), &
+      & new_unittest("valid-extxyz", test_extxyz) &
       & ]
 
 end subroutine collect_write
@@ -70,7 +71,7 @@ subroutine test_mol(error)
    end if
 
    open(file=name, newunit=unit)
-   close(unit, status='delete')
+   close(unit, status="delete")
 
 end subroutine test_mol
 
@@ -94,7 +95,7 @@ subroutine test_sdf(error)
    end if
 
    open(file=name, newunit=unit)
-   close(unit, status='delete')
+   close(unit, status="delete")
 
 end subroutine test_sdf
 
@@ -118,7 +119,7 @@ subroutine test_pdb(error)
    end if
 
    open(file=name, newunit=unit)
-   close(unit, status='delete')
+   close(unit, status="delete")
 
 end subroutine test_pdb
 
@@ -142,7 +143,7 @@ subroutine test_qchem(error)
    end if
 
    open(file=name, newunit=unit)
-   close(unit, status='delete')
+   close(unit, status="delete")
 
 end subroutine test_qchem
 
@@ -166,7 +167,7 @@ subroutine test_gen(error)
    end if
 
    open(file=name, newunit=unit)
-   close(unit, status='delete')
+   close(unit, status="delete")
 
 end subroutine test_gen
 
@@ -190,7 +191,7 @@ subroutine test_coord(error)
    end if
 
    open(file=name, newunit=unit)
-   close(unit, status='delete')
+   close(unit, status="delete")
 
 end subroutine test_coord
 
@@ -214,7 +215,7 @@ subroutine test_vasp(error)
    end if
 
    open(file=name, newunit=unit)
-   close(unit, status='delete')
+   close(unit, status="delete")
 
 end subroutine test_vasp
 
@@ -226,9 +227,43 @@ subroutine test_xyz(error)
 
    type(structure_type) :: struc
    character(len=:), allocatable :: name
+   real(wp), allocatable :: lattice(:, :)
    integer :: unit
 
    name = get_name() // ".xyz"
+
+   call get_structure(struc, "x01")
+   lattice = struc%lattice
+
+   call write_structure(struc, name, error)
+   if (.not.allocated(error)) then
+      call read_structure(struc, name, error)
+   end if
+
+   if (.not.allocated(error)) then
+      call check(error, maxval(abs(struc%lattice-lattice)), 0.0_wp, &
+         & "Lattice does not match", thr=1.0e-12_wp)
+   end if
+   if (.not.allocated(error)) then
+      call check(error, all(struc%periodic), "Periodicity does not match")
+   end if
+
+   open(file=name, newunit=unit)
+   close(unit, status="delete")
+
+end subroutine test_xyz
+
+
+subroutine test_extxyz(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: struc
+   character(len=:), allocatable :: name
+   integer :: unit
+
+   name = get_name() // ".extxyz"
 
    call get_structure(struc, "mindless04")
 
@@ -238,9 +273,9 @@ subroutine test_xyz(error)
    end if
 
    open(file=name, newunit=unit)
-   close(unit, status='delete')
+   close(unit, status="delete")
 
-end subroutine test_xyz
+end subroutine test_extxyz
 
 
 subroutine test_qcschema(error)
@@ -262,7 +297,7 @@ subroutine test_qcschema(error)
    end if
 
    open(file=name, newunit=unit)
-   close(unit, status='delete')
+   close(unit, status="delete")
 
 end subroutine test_qcschema
 
@@ -286,7 +321,7 @@ subroutine test_cjson(error)
    end if
 
    open(file=name, newunit=unit)
-   close(unit, status='delete')
+   close(unit, status="delete")
 
 end subroutine test_cjson
 
@@ -298,7 +333,7 @@ function get_name() result(name)
    real :: val
 
    call random_number(val)
-   write(name, '(a, z8.8)') "mctc-test-", int(val*1.0e9)
+   write(name, "(a, z8.8)") "mctc-test-", int(val*1.0e9)
 
 end function get_name
 

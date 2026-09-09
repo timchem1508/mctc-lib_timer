@@ -17,7 +17,7 @@ cmake_minimum_required(VERSION 3.14)
 project(
   "mctc-lib"
   LANGUAGES "Fortran"
-  VERSION "0.5.1"
+  VERSION "0.5.2"
   DESCRIPTION "Modular computation tool chain"
 )
 
@@ -28,7 +28,7 @@ include(GNUInstallDirs)
 add_subdirectory("config")
 
 # Dependencies
-if(NOT TARGET "jonquild::jonquil" AND WITH_JSON)
+if(NOT TARGET "jonquil::jonquil" AND MCTCLIB_WITH_JSON)
   find_package("toml-f" REQUIRED)
   find_package("jonquil" REQUIRED)
 endif()
@@ -42,12 +42,13 @@ add_library(
   "${PROJECT_NAME}-lib"
   "${srcs}"
 )
+add_library("${PROJECT_NAME}::${PROJECT_NAME}-lib" ALIAS "${PROJECT_NAME}-lib")
 target_compile_definitions(
   "${PROJECT_NAME}-lib"
   PRIVATE
   "WITH_JSON=$<BOOL:${WITH_JSON}>"
 )
-if(WITH_OpenMP)
+if(MCTCLIB_WITH_OpenMP)
   find_package(OpenMP REQUIRED)
   target_link_libraries(
     "${PROJECT_NAME}-lib"
@@ -89,6 +90,7 @@ add_subdirectory("app")
 
 # Export targets for other projects
 add_library("${PROJECT_NAME}" INTERFACE)
+add_library("${PROJECT_NAME}::${PROJECT_NAME}" ALIAS "${PROJECT_NAME}")
 target_link_libraries("${PROJECT_NAME}" INTERFACE "${PROJECT_NAME}-lib")
 install(
   TARGETS
