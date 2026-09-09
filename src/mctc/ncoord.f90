@@ -50,6 +50,9 @@ module mctc_ncoord
    use mctc_ncoord_dexp, only : dexp_ncoord_type, new_dexp_ncoord
    use mctc_ncoord_erf, only : erf_ncoord_type, new_erf_ncoord
    use mctc_ncoord_erf_dftd4, only : erf_dftd4_ncoord_type, new_erf_dftd4_ncoord
+   use mctc_ncoord_erf_en, only : erf_en_ncoord_type, new_erf_en_ncoord
+   use mctc_ncoord_exp, only : exp_ncoord_type, new_exp_ncoord
+   use mctc_ncoord_type, only : ncoord_type
    implicit none
    private
 

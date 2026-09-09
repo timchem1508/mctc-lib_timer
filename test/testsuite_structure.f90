@@ -51,6 +51,8 @@ contains
        case('feo2'); call feo2(self)
        case('pyrazole'); call pyrazole(self)
        case ('ice-ii'); call ice_ii(self)
+       case default
+         continue
       end select
 
    end subroutine get_structure
