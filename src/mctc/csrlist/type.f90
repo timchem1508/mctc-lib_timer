@@ -234,7 +234,7 @@ contains
 
    !> Generate a CSR-based hybrid neighbour list
    subroutine generate_hybrid(self, mol)
-      use omp_lib
+!$    use omp_lib
 
       !> Instance of the neighbourlist
       type(csr_list), intent(inout) :: self
@@ -315,13 +315,9 @@ contains
       if (self%complete) prob = prob * 2
 
       ! 4. OpenMP Setup & Allocation
-      call omp_set_dynamic(.false.)
-
-      !$omp parallel
-      !$omp master
-      nthr = omp_get_num_threads()
-      !$omp end master
-      !$omp end parallel
+      nthr = 1
+!$    call omp_set_dynamic(.false.)
+!$    nthr = omp_get_max_threads()
 
       allocate(thr_img(nthr), source=0)
 
@@ -352,7 +348,8 @@ contains
          !$omp shared(thr_buf, cell_w, lat_inv, min_xyz) &
          !$omp shared(n_xyz, kmin, kmax, cutoff2)
          do iat = 1, mol%nat
-            tid = omp_get_thread_num() + 1
+            tid = 1
+!$          tid = omp_get_thread_num() + 1
             start_count = thr_img(tid)
 
             ! Inject Diagonal (self-interaction) at position 1
@@ -420,7 +417,8 @@ contains
          !$omp shared(thr_buf, cell_w, min_xyz, n_xyz, cutoff2) &
          !$omp shared(kmin, kmax)
          do iat = 1, mol%nat
-            tid = omp_get_thread_num() + 1
+            tid = 1
+!$          tid = omp_get_thread_num() + 1
             start_count = thr_img(tid)
 
             ! Inject Diagonal (self-interaction) at position 1
@@ -509,7 +507,7 @@ contains
 
 !> Generator of the CSR-based Hybrid Neighbour List for Periodic systems using Wigner-Seitz Cell Search
    subroutine generate_wsc(self, mol, wsc)
-      use omp_lib
+!$    use omp_lib
 
       !> Instance of the neighbourlist
       type(csr_list), intent(inout) :: self
@@ -600,13 +598,9 @@ contains
       end do
 
       ! 4. Setup OpenMP Thread-Local Environments
-      call omp_set_dynamic(.false.)
-
-      !$omp parallel
-      !$omp master
-      nthr = omp_get_num_threads()
-      !$omp end master
-      !$omp end parallel
+      nthr = 1
+!$    call omp_set_dynamic(.false.)
+!$    nthr = omp_get_max_threads()
 
       vol = abs(det) * real(count(head /= 0), wp) / real(product(n_xyz), wp)
       dens = real(median, wp) * real(product(n_xyz), wp) / vol
@@ -645,7 +639,8 @@ contains
       !$omp shared(mol, self, head, nxt, thr_img, thr_trptr, thr_buf, thr_nimg_max, &
       !$omp        trans, zero_vec, cutoff2, n_xyz, lat_inv, kmin, kmax, thr_mem, thr_maxtr)
       do iat = 1, mol%nat
-         tid = omp_get_thread_num() + 1
+         tid = 1
+!$       tid = omp_get_thread_num() + 1
          start_count = thr_img(tid)
 
          ! A. Search for diagonal periodic self-interactions

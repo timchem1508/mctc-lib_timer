@@ -13,23 +13,32 @@
 ! limitations under the License.
 
 !> @file mctc/wignerseitz/type.f90
-!> Declaration of the ccylic cluster Wigner-Seitz type, generation, and weights evaluation.
+!> Declaration of the cyclic cluster Wigner-Seitz type, generation, and weight evaluation
 module mctc_wignerseitz_type
-   use mctc_env, only: wp
-   use mctc_io, only: structure_type
-   use mctc_cutoff, only: get_lattice_points
+   use mctc_env, only : wp
+   use mctc_io, only : structure_type
+   use mctc_cutoff, only : get_lattice_points
    implicit none
    private
 
-   public :: new_wignerseitz_cell, get_wignerseitz_weights, wignerseitz_cell, get_pairs
+   public :: new_wignerseitz_cell, get_wignerseitz_weights, wignerseitz_cell, &
+   & get_pairs
 
+   !> Wigner-Seitz cell and its nearest image translations
    type :: wignerseitz_cell
+      !> Maximum number of images per atom pair
       integer :: nimg_max
+      !> Number of images for each atom pair
       integer, allocatable :: nimg(:, :)
+      !> Translation indices for each atom pair
       integer, allocatable :: tridx(:, :, :)
+      !> Flattened atom-pair image offsets
       integer, allocatable :: itr_list(:)
+      !> Number of images for each atom pair in flattened storage
       integer, allocatable :: nimg_list(:)
+      !> Flattened translation indices
       integer, allocatable :: tridx_list(:)
+      !> Lattice translation vectors
       real(wp), allocatable :: trans(:, :)
    end type wignerseitz_cell
 
@@ -49,6 +58,7 @@ module mctc_wignerseitz_type
 contains
 
 
+   !> Construct a Wigner-Seitz cell for a molecular structure
    subroutine new_wignerseitz_cell(self, mol)
 
       !> Wigner-Seitz cell instance
@@ -83,10 +93,15 @@ contains
    end subroutine new_wignerseitz_cell
 
 
+   !> Find the nearest translation images for an interatomic vector
    subroutine get_pairs(iws, trans, rij, list)
+      !> Number of nearest images
       integer, intent(out) :: iws
-      real(wp), intent(in) :: rij(3)
+      !> Translation vectors
       real(wp), intent(in) :: trans(:, :)
+      !> Interatomic vector
+      real(wp), intent(in) :: rij(3)
+      !> Indices of the nearest translation images
       integer, intent(out) :: list(:)
 
       logical :: mask(size(list))
@@ -130,6 +145,7 @@ contains
 
    end subroutine get_pairs
 
+   !> Find nearest translation images and their minimum squared distance
    subroutine get_pairs_csr(trans, rij, iws, list, min_r2)
       !> Translation vectors
       real(wp), intent(in) :: trans(:, :)
@@ -173,8 +189,9 @@ contains
 
    end subroutine get_pairs_csr
 
-!> Compact C2 switching function for competing nearest images
+   !> Compact C2 switching function for competing nearest images
    pure elemental function smooth_image_weight(delta) result(weight)
+      !> Squared-distance difference from the nearest image
       real(wp), intent(in) :: delta
       real(wp) :: weight, x
 
@@ -183,8 +200,9 @@ contains
    end function smooth_image_weight
 
 
-!> Derivative of the compact switching function with respect to squared distance
+   !> Derivative of the compact switching function with respect to squared distance
    pure elemental function smooth_image_weight_derivative(delta) result(derivative)
+      !> Squared-distance difference from the nearest image
       real(wp), intent(in) :: delta
       real(wp) :: derivative, x
 
