@@ -12,7 +12,7 @@
 ! See the License for the specific language governing permissions and
 ! limitations under the License.
 
-!> Declaration of base class for coordination number evalulations
+!> Declaration of base class for coordination number evaluations
 module mctc_ncoord_type
    use mctc_env, only : wp
    use mctc_io, only : structure_type
@@ -25,13 +25,13 @@ module mctc_ncoord_type
    !> Abstract base class for coordination number evaluator
    type, public, abstract :: ncoord_type
       !> Radial cutoff for the coordination number
-      real(wp)  :: cutoff
+      real(wp) :: cutoff
       !> Steepness of counting function
-      real(wp)  :: kcn
+      real(wp) :: kcn
       !> Factor determining whether the CN is evaluated with direction
       !> if +1 the CN contribution is added equally to both partners
       !> if -1 (i.e. with the EN-dep.) it is added to one and subtracted from the other
-      real(wp)  :: directed_factor
+      real(wp) :: directed_factor
       !> Cutoff for the maximum coordination number (negative value, no cutoff)
       real(wp)  :: cut = -1.0_wp
    contains
@@ -103,7 +103,7 @@ contains
       real(wp), intent(out) :: cn(:)
       !> Derivative of the CN with respect to the Cartesian coordinates.
       real(wp), intent(out), optional :: dcndr(:, :, :)
-      !> Derivative of the CN with respect to strain deformations.
+      !> Derivative of the CN with respect to strain deformations
       real(wp), intent(out), optional :: dcndL(:, :, :)
 
       real(wp), allocatable :: lattr(:, :)
@@ -113,7 +113,8 @@ contains
    end subroutine get_cn
 
    !> Geometric fractional coordination number
-   subroutine get_coordination_number(self, mol, trans, cn, dcndr, dcndL, list, dcndrij, dcndrji, dcndrdiag)
+   subroutine get_coordination_number(self, mol, trans, cn, dcndr, dcndL, list, &
+   & dcndrij, dcndrji, dcndrdiag)
 
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -124,28 +125,27 @@ contains
       !> Lattice points
       real(wp), intent(in) :: trans(:, :)
 
-      !> Error function coordination number.
+      !> Coordination number
       real(wp), intent(out) :: cn(:)
 
-      !> Derivative of the CN with respect to the Cartesian coordinates.
+      !> Derivative of the CN with respect to Cartesian coordinates
       real(wp), intent(out), optional :: dcndr(:, :, :)
 
-
-      !> Derivative of the CN with respect to strain deformations.
+      !> Derivative of the CN with respect to strain deformations
       real(wp), intent(out), optional :: dcndL(:, :, :)
 
       !> Adjacency list for neighbourlist-based CN evaluation
       type(csr_list), intent(in), optional :: list
 
-      !> Derivative of the CN with respect to the Cartesian coordinates.
-      real(wp), intent(out), optional :: dcndrij(:, :), dcndrji(:, :), dcndrdiag(:, :)
-
-
+      !> Derivatives of the CN with respect to Cartesian coordinates
+      real(wp), intent(out), optional :: dcndrij(:, :), dcndrji(:, :), &
+      & dcndrdiag(:, :)
 
       if (present(list)) then
          if (present(dcndrij) .and. present(dcndrji) &
          & .and. present(dcndrdiag) .and. present(dcndL)) then
-            call ncoord_d_list(self, mol, trans, cn, dcndrij, dcndrji, dcndrdiag, dcndL, list)
+            call ncoord_d_list(self, mol, trans, cn, dcndrij, dcndrji, &
+            & dcndrdiag, dcndL, list)
          else
             call ncoord_list(self, mol, trans, cn, list)
          end if
@@ -164,6 +164,7 @@ contains
    end subroutine get_coordination_number
 
 
+   !> Evaluates coordination numbers without derivatives
    subroutine ncoord(self, mol, trans, cn)
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -171,7 +172,7 @@ contains
       type(structure_type), intent(in) :: mol
       !> Lattice points
       real(wp), intent(in) :: trans(:, :)
-      !> Error function coordination number.
+      !> Coordination number
       real(wp), intent(out) :: cn(:)
 
       integer :: iat, jat, izp, jzp, itr
@@ -220,6 +221,7 @@ contains
 
    end subroutine ncoord
 
+   !> Evaluates coordination numbers using a neighbour list
    subroutine ncoord_list(self, mol, trans, cn, list)
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -227,7 +229,7 @@ contains
       type(structure_type), intent(in) :: mol
       !> Lattice points
       real(wp), intent(in) :: trans(:, :)
-      !> Error function coordination number.
+      !> Coordination number
       real(wp), intent(out) :: cn(:)
       !> Adjacency list for neighbourlist-based CN evaluation
       type(csr_list), intent(in) :: list
@@ -249,7 +251,7 @@ contains
       !$omp do schedule(runtime)
       do iat = 1, mol%nat
          izp = mol%id(iat)
-         do kat = list%inl(iat) + 1, list%inl(iat + 1) - 1
+         do kat = list%inl(iat), list%inl(iat + 1) - 1
             jat = list%nlat(kat)
             jzp = mol%id(jat)
             den = self%get_en_factor(izp, jzp)
@@ -269,15 +271,6 @@ contains
 
             end do
          end do
-         den = self%get_en_factor(izp, izp)
-         do itr = 1, size(trans, dim=2)
-            rij = mol%xyz(:, iat) - (mol%xyz(:, iat) + trans(:, itr))
-            r2 = sum(rij**2)
-            if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
-            r1 = sqrt(r2)
-            countf = den * self%ncoord_count(izp, izp, r1)
-            cn_local(iat) = cn_local(iat) + countf
-         end do
       end do
       !$omp end do
       !$omp critical (ncoord_list_)
@@ -288,6 +281,7 @@ contains
 
    end subroutine ncoord_list
 
+   !> Evaluates coordination numbers and their derivatives
    subroutine ncoord_d(self, mol, trans, cn, dcndr, dcndL)
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -295,7 +289,7 @@ contains
       type(structure_type), intent(in) :: mol
       !> Lattice points
       real(wp), intent(in) :: trans(:, :)
-      !> Error function coordination number.
+      !> Coordination number
       real(wp), intent(out) :: cn(:)
       !> Derivative of the CN with respect to the Cartesian coordinates.
       real(wp), intent(out) :: dcndr(:, :, :)
@@ -343,15 +337,18 @@ contains
                end if
 
                dcndr_local(:, iat, iat) = dcndr_local(:, iat, iat) + countd
-               dcndr_local(:, jat, jat) = dcndr_local(:, jat, jat) - countd * self%directed_factor
-               dcndr_local(:, iat, jat) = dcndr_local(:, iat, jat) + countd * self%directed_factor
+               dcndr_local(:, jat, jat) = dcndr_local(:, jat, jat) &
+               & - countd * self%directed_factor
+               dcndr_local(:, iat, jat) = dcndr_local(:, iat, jat) &
+               & + countd * self%directed_factor
                dcndr_local(:, jat, iat) = dcndr_local(:, jat, iat) - countd
 
                sigma = spread(countd, 1, 3) * spread(rij, 2, 3)
 
                dcndL_local(:, :, iat) = dcndL_local(:, :, iat) + sigma
                if (iat /= jat) then
-                  dcndL_local(:, :, jat) = dcndL_local(:, :, jat) + sigma * self%directed_factor
+                  dcndL_local(:, :, jat) = dcndL_local(:, :, jat) &
+                  & + sigma * self%directed_factor
                end if
 
             end do
@@ -368,7 +365,9 @@ contains
 
    end subroutine ncoord_d
 
-   subroutine ncoord_d_list(self, mol, trans, cn, dcndrij, dcndrji, dcndrdiag, dcndL, list)
+   !> Evaluates coordination numbers and derivatives using a neighbour list
+   subroutine ncoord_d_list(self, mol, trans, cn, dcndrij, dcndrji, dcndrdiag, &
+   & dcndL, list)
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
       !> Molecular structure data
@@ -389,7 +388,7 @@ contains
 
       ! Thread-private arrays for reduction
       real(wp), allocatable :: cn_local(:)
-      real(wp), allocatable :: dcndrdiag_local(:, :),  dcndL_local(:, :, :)
+      real(wp), allocatable :: dcndrdiag_local(:, :), dcndL_local(:, :, :)
       real(wp), allocatable :: dcndrlistij_local(:, :), dcndrlistji_local(:, :)
 
       cn(:) = 0.0_wp
@@ -400,9 +399,11 @@ contains
       cutoff2 = self%cutoff**2
 
       !$omp parallel default(none) &
-      !$omp shared(self, mol, list, trans, cutoff2, cn, dcndrij, dcndrji, dcndrdiag, dcndL) &
+      !$omp shared(self, mol, list, trans, cutoff2, cn, dcndrij, dcndrji, &
+      !$omp& dcndrdiag, dcndL) &
       !$omp private(jat, kat, itr, izp, jzp, r2, rij, r1, den, countf, countd) &
-      !$omp private(sigma, cn_local, dcndrlistij_local, dcndrlistji_local, dcndrdiag_local, dcndL_local)
+      !$omp private(sigma, cn_local, dcndrlistij_local, dcndrlistji_local, &
+      !$omp& dcndrdiag_local, dcndL_local)
       allocate(cn_local, source=cn)
       allocate(dcndrlistij_local, source=dcndrij)
       allocate(dcndrlistji_local, source=dcndrji)
@@ -431,18 +432,21 @@ contains
                end if
 
                ! store off-diagonal block (iat,jat)
-               dcndrlistij_local(:, kat) = dcndrlistij_local(:, kat) + countd * self%directed_factor
+               dcndrlistij_local(:, kat) = dcndrlistij_local(:, kat) &
+               & + countd * self%directed_factor
                dcndrlistji_local(:, kat) = dcndrlistji_local(:, kat) - countd
 
                ! accumulate diagonals
                dcndrdiag_local(:,iat) = dcndrdiag_local(:,iat) + countd
-               dcndrdiag_local(:,jat) = dcndrdiag_local(:,jat) - countd * self%directed_factor
+               dcndrdiag_local(:, jat) = dcndrdiag_local(:, jat) &
+               & - countd * self%directed_factor
 
                sigma = spread(countd, 1, 3) * spread(rij, 2, 3)
 
                dcndL_local(:, :, iat) = dcndL_local(:, :, iat) + sigma
                if (iat /= jat) then
-                  dcndL_local(:, :, jat) = dcndL_local(:, :, jat) + sigma * self%directed_factor
+                  dcndL_local(:, :, jat) = dcndL_local(:, :, jat) &
+                  & + sigma * self%directed_factor
                end if
 
             end do
@@ -471,17 +475,30 @@ contains
       dcndrdiag(:, :)  = dcndrdiag(:, :)  + dcndrdiag_local(:, :)
       dcndL(:, :, :)   = dcndL(:, :, :)   + dcndL_local(:, :, :)
       !$omp end critical (ncoord_d_list_)
-      deallocate(cn_local, dcndrlistij_local, dcndrlistji_local, dcndrdiag_local, dcndL_local)
+      deallocate(cn_local, dcndrlistij_local, dcndrlistji_local, &
+      & dcndrdiag_local, dcndL_local)
       !$omp end parallel
 
    end subroutine ncoord_d_list
 
+   !> Adds coordination number derivatives to a gradient and stress tensor
    subroutine add_coordination_number_derivs(self, mol, trans, dEdcn, gradient, sigma)
+      !> Coordination number container
       class(ncoord_type), intent(in) :: self
+
+      !> Molecular structure data
       type(structure_type), intent(in) :: mol
+
+      !> Lattice points
       real(wp), intent(in) :: trans(:, :)
+
+      !> Derivative of the expression with respect to the coordination number
       real(wp), intent(in) :: dEdcn(:)
+
+      !> Cartesian gradient
       real(wp), intent(inout) :: gradient(:, :)
+
+      !> Strain derivative
       real(wp), intent(inout) :: sigma(:, :)
 
       integer :: iat, jat, izp, jzp, itr
@@ -523,7 +540,8 @@ contains
             if (self%cut > 0.0_wp) jdamp = dlog_cn_cut(cn(jat), self%cut)
 
             ! Combined chain-rule factor for the pair contribution
-            combined_factor = dEdcn(iat) * idamp + dEdcn(jat) * self%directed_factor * jdamp
+            combined_factor = dEdcn(iat) * idamp &
+            & + dEdcn(jat) * self%directed_factor * jdamp
 
             do itr = 1, size(trans, dim=2)
                rij = mol%xyz(:, iat) - (mol%xyz(:, jat) + trans(:, itr))
@@ -555,7 +573,9 @@ contains
       !$omp end parallel
    end subroutine add_coordination_number_derivs
 
-   subroutine add_coordination_number_derivs_list(self, mol, trans, dEdcn, gradient, sigma, list)
+   !> Adds coordination number derivatives using a neighbour list
+   subroutine add_coordination_number_derivs_list(self, mol, trans, dEdcn, gradient, &
+   & sigma, list)
 
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -566,7 +586,7 @@ contains
       !> Lattice points
       real(wp), intent(in) :: trans(:, :)
 
-      !> Derivative of expression with respect to the coordination number
+      !> Derivative of the expression with respect to the coordination number
       real(wp), intent(in) :: dEdcn(:)
 
       !> Derivative of the CN with respect to the Cartesian coordinates
@@ -618,7 +638,8 @@ contains
             if (self%cut > 0.0_wp) jdamp = dlog_cn_cut(cn(jat), self%cut)
 
             ! Combined chain-rule factor for the pair contribution
-            combined_factor = dEdcn(iat) * idamp + dEdcn(jat) * self%directed_factor * jdamp
+            combined_factor = dEdcn(iat) * idamp &
+            & + dEdcn(jat) * self%directed_factor * jdamp
 
             do itr = 1, size(trans, dim=2)
                rij = mol%xyz(:, iat) - (mol%xyz(:, jat) + trans(:, itr))
@@ -662,7 +683,7 @@ contains
    end subroutine add_coordination_number_derivs_list
 
 
-   !> Evaluates pairwise electronegativity factor if non applies
+   !> Evaluates the pairwise electronegativity factor
    elemental function get_en_factor(self, izp, jzp) result(en_factor)
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -696,38 +717,48 @@ contains
       real(wp), intent(inout), optional :: dcndL(:, :, :)
 
       real(wp) :: dcnpdcn
-      integer  :: iat
+      integer :: iat
 
       if (present(dcndL)) then
          do iat = 1, size(cn)
             dcnpdcn = dlog_cn_cut(cn(iat), cn_max)
             dcndL(:, :, iat) = dcnpdcn*dcndL(:, :, iat)
-         enddo
-      endif
+         end do
+      end if
 
       if (present(dcndr)) then
          do iat = 1, size(cn)
             dcnpdcn = dlog_cn_cut(cn(iat), cn_max)
             dcndr(:, :, iat) = dcnpdcn*dcndr(:, :, iat)
-         enddo
-      endif
+         end do
+      end if
 
       do iat = 1, size(cn)
          cn(iat) = log_cn_cut(cn(iat), cn_max)
-      enddo
+      end do
 
    end subroutine cut_coordination_number
 
+   !> Applies the smooth coordination number cutoff
    elemental function log_cn_cut(cn, cnmax) result(cnp)
+      !> Coordination number
       real(wp), intent(in) :: cn
+
+      !> Maximum coordination number
       real(wp), intent(in) :: cnmax
+
       real(wp) :: cnp
       cnp = log(1.0_wp + exp(cnmax)) - log(1.0_wp + exp(cnmax - cn))
    end function log_cn_cut
 
+   !> Evaluates the derivative of the smooth coordination number cutoff
    elemental function dlog_cn_cut(cn, cnmax) result(dcnpdcn)
+      !> Coordination number
       real(wp), intent(in) :: cn
+
+      !> Maximum coordination number
       real(wp), intent(in) :: cnmax
+
       real(wp) :: dcnpdcn
       dcnpdcn = exp(cnmax)/(exp(cnmax) + exp(cn))
    end function dlog_cn_cut

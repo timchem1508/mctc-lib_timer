@@ -65,7 +65,8 @@ contains
       & new_unittest("csr-vs-verlet-mb02", test_list_mb02), &
       & new_unittest("csr-vs-verlet-water-complete", test_list_water_complete), &
       & new_unittest("csr-vs-verlet-methane-complete", test_list_methane_complete), &
-      & new_unittest("csr-vs-verlet-fullerene-complete", test_list_fullerene_complete), &
+      & new_unittest("csr-vs-verlet-fullerene-complete", &
+      & test_list_fullerene_complete), &
       & new_unittest("csr-vs-verlet-mb09-complete", test_list_mb09_complete), &
       & new_unittest("csr-vs-verlet-mb10-complete", test_list_mb10_complete), &
       & new_unittest("csr-vs-verlet-nacl-complete", test_list_nacl_complete), &
@@ -238,7 +239,7 @@ contains
       call new_csr_list(list, mol, cutoff=cutoff, trans=trans, complete=cmp)
 
       do iat = 1, mol%nat
-         do kat = list%inl(iat) + 1, list%inl(iat+1) -1
+         do kat = list%inl(iat) + 1, list%inl(iat+1) - 1
             jat = list%nlat(kat)
             if (allocated(list%nltr)) then
                itr = list%nltr(kat)
@@ -247,7 +248,8 @@ contains
             end if
             vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - trans(:, itr)
             if (sum(vec**2) >= cutoff**2) then
-               call test_failed(error, "The pair in the neighbour list is outside the cutoff radius.")
+               call test_failed(error, &
+               & "The pair in the neighbour list is outside the cutoff radius.")
                exit
             end if
          end do
@@ -351,7 +353,8 @@ contains
                exit
             end if
             if (.not. any(tr == ref_nltr(ref_ptr(iat):ref_ptr(iat+1)-1))) then
-               call test_failed(error, "Neighbour list translations array does not match reference.")
+               call test_failed(error, &
+               & "Neighbour list translations array does not match reference.")
                print'(20a)', "Generated translations:"
                print'(10i6)', list%nltr
                print'(20a)', "Reference translations:"
@@ -399,7 +402,9 @@ contains
                exit
             end if
             if (.not. ntr == ref_nimg(kat)) then
-               call test_failed(error, "Neighbour list WSC translations number array does not match reference.")
+               call test_failed(error, &
+               & "Neighbour list WSC translations number array does not match " // &
+               & "reference.")
                print'(20a)', "Generated translations:"
                print'(10i6)', list%wsc%nimg_list
                print'(20a)', "Reference translations:"
@@ -408,9 +413,11 @@ contains
             end if
             do itr = list%wsc%itr_list(kat), list%wsc%itr_list(kat+1) - 1
                tridx = list%wsc%tridx_list(itr)
-               vec = mol%xyz(:, jat) - mol%xyz(:, iat) + list%wsc%trans(:, list%wsc%tridx_list(itr))
+               vec = mol%xyz(:, jat) - mol%xyz(:, iat) &
+               & + list%wsc%trans(:, list%wsc%tridx_list(itr))
                if (sum(vec**2) >= cutoff**2) then
-                  call test_failed(error, "The pair in the neighbour list is outside the cutoff radius.")
+                  call test_failed(error, &
+                  & "The pair in the neighbour list is outside the cutoff radius.")
                   exit
                end if
             end do
@@ -526,6 +533,8 @@ contains
       call test_grid_gen(error, mol, cutoff, ref_nxyz)
 
    end subroutine test_grid_nacl
+
+
    subroutine test_grid_feo2(error)
 
       !> Error handling
@@ -544,6 +553,8 @@ contains
       call test_grid_gen(error, mol, cutoff, ref_nxyz)
 
    end subroutine test_grid_feo2
+
+
    subroutine test_grid_x02_114(error)
 
       !> Error handling
@@ -555,7 +566,7 @@ contains
       type(structure_type) :: mol
       real(wp), parameter :: cutoff = 29.0_wp
       real(wp), allocatable :: trans(:, :)
-      integer, parameter :: supercell(*) = [1, 1, 4]
+      integer, parameter :: supercell(3) = [1, 1, 4]
 
       call get_structure(mol, "x02")
       call make_supercell(mol, supercell)
@@ -564,6 +575,7 @@ contains
       call test_grid_gen(error, mol, cutoff, ref_nxyz)
 
    end subroutine test_grid_x02_114
+
    subroutine test_distance_fullerene_cut_5(error)
 
       !> Error handling
@@ -581,6 +593,7 @@ contains
       call test_distance(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_distance_fullerene_cut_5
+
    subroutine test_distance_feo2_cut_5(error)
 
       !> Error handling
@@ -596,6 +609,8 @@ contains
       call test_distance(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_distance_feo2_cut_5
+
+
    subroutine test_list_water(error)
 
       !> Error handling
@@ -606,9 +621,11 @@ contains
       real(wp), allocatable :: trans(:, :)
 
       integer, parameter :: ref_ptr(4) = [&
-      & 1, 4, 6, 7]
+      & 1, 4, 6, &
+      & 7]
       integer, parameter :: ref_list(6) = [&
-      & 1, 2, 3, 2, 3, 3]
+      & 1, 2, 3, &
+      & 2, 3, 3]
 
       allocate(trans(3, 1))
       trans = 0.0_wp
@@ -618,6 +635,8 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_water
+
+
    subroutine test_list_methane(error)
 
       !> Error handling
@@ -628,10 +647,14 @@ contains
       real(wp), allocatable :: trans(:, :)
 
       integer, parameter :: ref_ptr(6) = [&
-      & 1, 6, 10, 13, 15, 16]
+      & 1, 6, 10, &
+      & 13, 15, 16]
       integer, parameter :: ref_list(15) = [&
-      & 1, 2, 3, 4, 5, 2, 3, 4, 5, 3, &
-      & 4, 5, 4, 5, 5]
+      & 1, 2, 3, &
+      & 4, 5, 2, &
+      & 3, 4, 5, &
+      & 3, 4, 5, &
+      & 4, 5, 5]
 
       allocate(trans(3, 1))
       trans = 0.0_wp
@@ -641,6 +664,8 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_methane
+
+
    subroutine test_list_fullerene(error)
 
       !> Error handling
@@ -658,6 +683,8 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_fullerene
+
+
    subroutine test_list_nacl(error)
 
       !> Error handling
@@ -673,6 +700,8 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_nacl
+
+
    subroutine test_list_feo2(error)
 
       !> Error handling
@@ -688,6 +717,8 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_feo2
+
+
    subroutine test_list_x01(error)
 
       !> Error handling
@@ -703,6 +734,8 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_x01
+
+
    subroutine test_list_x02(error)
 
       !> Error handling
@@ -718,6 +751,8 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_x02
+
+
    subroutine test_list_x02_114(error)
 
       !> Error handling
@@ -726,7 +761,7 @@ contains
       type(structure_type) :: mol
       real(wp), parameter :: cutoff = 29.0_wp
       real(wp), allocatable :: trans(:, :)
-      integer, parameter :: supercell(*) = [1, 1, 4]
+      integer, parameter :: supercell(3) = [1, 1, 4]
 
       call get_structure(mol, "x02")
       call make_supercell(mol, supercell)
@@ -735,6 +770,8 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_x02_114
+
+
    subroutine test_list_mb01(error)
 
       !> Error handling
@@ -752,6 +789,8 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_mb01
+
+
    subroutine test_list_mb02(error)
 
       !> Error handling
@@ -769,6 +808,8 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
 
    end subroutine test_list_mb02
+
+
    subroutine test_list_water_complete(error)
 
       !> Error handling
@@ -786,6 +827,8 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_water_complete
+
+
    subroutine test_list_methane_complete(error)
 
       !> Error handling
@@ -803,6 +846,8 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_methane_complete
+
+
    subroutine test_list_fullerene_complete(error)
 
       !> Error handling
@@ -820,6 +865,8 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_fullerene_complete
+
+
    subroutine test_list_mb09_complete(error)
 
       !> Error handling
@@ -837,6 +884,8 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_mb09_complete
+
+
    subroutine test_list_mb10_complete(error)
 
       !> Error handling
@@ -854,6 +903,8 @@ contains
       call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_mb10_complete
+
+
    subroutine test_list_nacl_complete(error)
 
       !> Error handling
@@ -869,6 +920,8 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_nacl_complete
+
+
    subroutine test_list_feo2_complete(error)
 
       !> Error handling
@@ -884,6 +937,8 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_feo2_complete
+
+
    subroutine test_list_x04_complete(error)
 
       !> Error handling
@@ -899,6 +954,8 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_x04_complete
+
+
    subroutine test_list_x05_complete(error)
 
       !> Error handling
@@ -914,6 +971,8 @@ contains
       call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
 
    end subroutine test_list_x05_complete
+
+
    subroutine test_nacl_wsc(error)
       !> Error handling
       type(error_type), allocatable, intent(out) :: error
@@ -923,13 +982,15 @@ contains
       ! Reference neighbour list
       integer, parameter :: ref_list(3) = [1, 2, 2]
       ! Reference array of the number of translation images
-      integer, parameter  :: ref_nimg(3) = [12, 6, 12]
+      integer, parameter :: ref_nimg(3) = [12, 6, 12]
 
 
       call get_structure(mol, "nacl")
       call test_wsc(error, mol, cutoff, .false., ref_list, ref_nimg)
 
    end subroutine test_nacl_wsc
+
+
    subroutine test_feo2_wsc(error)
       !> Error handling
       type(error_type), allocatable, intent(out) :: error
@@ -940,43 +1001,54 @@ contains
       ! Reference neighbour list
       integer, parameter :: ref_list(6) = [1, 3, 2, 2, 3, 3]
       ! Reference array of the number of translation images
-      integer, parameter  :: ref_nimg(6) = [6, 3, 3, 6, 3, 6]
+      integer, parameter :: ref_nimg(6) = [6, 3, 3, 6, 3, 6]
 
       call get_structure(mol, "feo2")
       call test_wsc(error, mol, cutoff, .false., ref_list, ref_nimg)
 
 
    end subroutine test_feo2_wsc
+
+
    subroutine test_spmv_mcharge(error)
 
       !> Error handling
       type(error_type), allocatable, intent(out) :: error
 
       real(wp), parameter :: mdiag(5) = [&
-         1.95301539743829E+01_wp, 1.60040861485901E+01_wp, 1.60040861378386E+01_wp, 1.60040861396139E+01_wp, 1.60040861464410E+01_wp &
+         1.95301539743829E+01_wp, 1.60040861485901E+01_wp, 1.60040861378386E+01_wp, &
+         1.60040861396139E+01_wp, 1.60040861464410E+01_wp &
          ]
 
       real(wp), parameter :: mlist(15) = [&
-         0.00000000000000E+00_wp, -1.40182420507753E+00_wp, -1.40182420319457E+00_wp, -1.40182420372164E+00_wp, -1.40182420463048E+00_wp, &
-         0.00000000000000E+00_wp, -3.28540587512732E-01_wp, -3.28540587378075E-01_wp, -3.28540587649869E-01_wp,  0.00000000000000E+00_wp, &
-         -3.28540587252914E-01_wp, -3.28540587468433E-01_wp,  0.00000000000000E+00_wp, -3.28540587433195E-01_wp,  0.00000000000000E+00_wp &
+         0.00000000000000E+00_wp, -1.40182420507753E+00_wp, -1.40182420319457E+00_wp, &
+         -1.40182420372164E+00_wp, -1.40182420463048E+00_wp, 0.00000000000000E+00_wp, &
+         -3.28540587512732E-01_wp, -3.28540587378075E-01_wp, -3.28540587649869E-01_wp, &
+         0.00000000000000E+00_wp, -3.28540587252914E-01_wp, -3.28540587468433E-01_wp, &
+         0.00000000000000E+00_wp, -3.28540587433195E-01_wp, 0.00000000000000E+00_wp &
          ]
 
       real(wp), parameter :: vec(5) = [&
-         -1.32959314386409E-01_wp, +3.39873408224628E-02_wp, +3.39873400653214E-02_wp, +3.39873402792960E-02_wp, +3.39873406420377E-02_wp &
+         -1.32959314386409E-01_wp, +3.39873408224628E-02_wp, +3.39873400653214E-02_wp, &
+         +3.39873402792960E-02_wp, +3.39873406420377E-02_wp &
          ]
 
       real(wp), parameter :: vrhs(5) = [&
-         -2.78729298821854E+00_wp, 6.96823253402542E-01_wp, 6.96823240431084E-01_wp, 6.96823244062044E-01_wp, 6.96823250322879E-01_wp &
+         -2.78729298821854E+00_wp, 6.96823253402542E-01_wp, 6.96823240431084E-01_wp, &
+         6.96823244062044E-01_wp, 6.96823250322879E-01_wp &
          ]
 
       integer, parameter :: ptr(6) = [&
-         1, 6, 10, 13, 15, 16 &
+         1, 6, 10, &
+         13, 15, 16 &
          ]
 
       integer, parameter :: cindx(15) = [&
-         1, 2, 3, 4, 5, 2, 3, 4, 5, 3, &
-         4, 5, 4, 5, 5 &
+         1, 2, 3, &
+         4, 5, 2, &
+         3, 4, 5, &
+         3, 4, 5, &
+         4, 5, 5 &
          ]
 
       type(csr_list), allocatable :: list
@@ -999,32 +1071,42 @@ contains
       end if
 
    end subroutine test_spmv_mcharge
+
+
    subroutine test_spmv_csr(error)
 
       !> Error handling
       type(error_type), allocatable, intent(out) :: error
 
       real(wp), parameter :: mlist(15) = [&
-         1.95301539743829E+01_wp, -1.40182420507753E+00_wp, -1.40182420319457E+00_wp, -1.40182420372164E+00_wp, -1.40182420463048E+00_wp, &
-         1.60040861485901E+01_wp, -3.28540587512732E-01_wp, -3.28540587378075E-01_wp, -3.28540587649869E-01_wp,  1.60040861378386E+01_wp, &
-         -3.28540587252914E-01_wp, -3.28540587468433E-01_wp,  1.60040861396139E+01_wp, -3.28540587433195E-01_wp,  1.60040861464410E+01_wp &
+         1.95301539743829E+01_wp, -1.40182420507753E+00_wp, -1.40182420319457E+00_wp, &
+         -1.40182420372164E+00_wp, -1.40182420463048E+00_wp, 1.60040861485901E+01_wp, &
+         -3.28540587512732E-01_wp, -3.28540587378075E-01_wp, -3.28540587649869E-01_wp, &
+         1.60040861378386E+01_wp, -3.28540587252914E-01_wp, -3.28540587468433E-01_wp, &
+         1.60040861396139E+01_wp, -3.28540587433195E-01_wp, 1.60040861464410E+01_wp &
          ]
 
       real(wp), parameter :: vec(5) = [&
-         -1.32959314386409E-01_wp, +3.39873408224628E-02_wp, +3.39873400653214E-02_wp, +3.39873402792960E-02_wp, +3.39873406420377E-02_wp &
+         -1.32959314386409E-01_wp, +3.39873408224628E-02_wp, +3.39873400653214E-02_wp, &
+         +3.39873402792960E-02_wp, +3.39873406420377E-02_wp &
          ]
 
       real(wp), parameter :: vrhs(5) = [&
-         -2.78729298821854E+00_wp, 6.96823253402542E-01_wp, 6.96823240431084E-01_wp, 6.96823244062044E-01_wp, 6.96823250322879E-01_wp &
+         -2.78729298821854E+00_wp, 6.96823253402542E-01_wp, 6.96823240431084E-01_wp, &
+         6.96823244062044E-01_wp, 6.96823250322879E-01_wp &
          ]
 
       integer, parameter :: ptr(6) = [&
-         1, 6, 10, 13, 15, 16 &
+         1, 6, 10, &
+         13, 15, 16 &
          ]
 
       integer, parameter :: cindx(15) = [&
-         1, 2, 3, 4, 5, 2, 3, 4, 5, 3, &
-         4, 5, 4, 5, 5 &
+         1, 2, 3, &
+         4, 5, 2, &
+         3, 4, 5, &
+         3, 4, 5, &
+         4, 5, 5 &
          ]
 
       type(csr_list), allocatable :: list
@@ -1047,35 +1129,50 @@ contains
       end if
 
    end subroutine test_spmv_csr
+
+
    subroutine test_spmv_csr_complete(error)
 
       !> Error handling
       type(error_type), allocatable, intent(out) :: error
 
       real(wp), parameter :: mlist(25) = [ &
-         1.95301539743829E+01_wp, -1.40182420507753E+00_wp, -1.40182420319457E+00_wp, -1.40182420372164E+00_wp, -1.40182420463048E+00_wp, &
-         1.60040861485901E+01_wp, -1.40182420507753E+00_wp, -3.28540587512732E-01_wp, -3.28540587378075E-01_wp, -3.28540587649869E-01_wp, &
-         1.60040861378386E+01_wp, -1.40182420319457E+00_wp, -3.28540587512732E-01_wp, -3.28540587252914E-01_wp, -3.28540587468433E-01_wp, &
-         1.60040861396139E+01_wp, -1.40182420372164E+00_wp, -3.28540587378075E-01_wp, -3.28540587252914E-01_wp, -3.28540587433195E-01_wp, &
-         1.60040861464410E+01_wp, -1.40182420463048E+00_wp, -3.28540587649869E-01_wp, -3.28540587468433E-01_wp, -3.28540587433195E-01_wp &
+         1.95301539743829E+01_wp, -1.40182420507753E+00_wp, -1.40182420319457E+00_wp, &
+         -1.40182420372164E+00_wp, -1.40182420463048E+00_wp, 1.60040861485901E+01_wp, &
+         -1.40182420507753E+00_wp, -3.28540587512732E-01_wp, -3.28540587378075E-01_wp, &
+         -3.28540587649869E-01_wp, 1.60040861378386E+01_wp, -1.40182420319457E+00_wp, &
+         -3.28540587512732E-01_wp, -3.28540587252914E-01_wp, -3.28540587468433E-01_wp, &
+         1.60040861396139E+01_wp, -1.40182420372164E+00_wp, -3.28540587378075E-01_wp, &
+         -3.28540587252914E-01_wp, -3.28540587433195E-01_wp, 1.60040861464410E+01_wp, &
+         -1.40182420463048E+00_wp, -3.28540587649869E-01_wp, -3.28540587468433E-01_wp, &
+         -3.28540587433195E-01_wp &
          ]
 
       real(wp), parameter :: vec(5) = [&
-         -1.32959314386409E-01_wp, +3.39873408224628E-02_wp, +3.39873400653214E-02_wp, +3.39873402792960E-02_wp, +3.39873406420377E-02_wp &
+         -1.32959314386409E-01_wp, +3.39873408224628E-02_wp, +3.39873400653214E-02_wp, &
+         +3.39873402792960E-02_wp, +3.39873406420377E-02_wp &
          ]
 
       real(wp), parameter :: vrhs(5) = [&
-         -2.78729298821854E+00_wp, 6.96823253402542E-01_wp, 6.96823240431084E-01_wp, 6.96823244062044E-01_wp, 6.96823250322879E-01_wp &
+         -2.78729298821854E+00_wp, 6.96823253402542E-01_wp, 6.96823240431084E-01_wp, &
+         6.96823244062044E-01_wp, 6.96823250322879E-01_wp &
          ]
 
       integer, parameter :: ptr(6) = [&
-         1, 6, 11, 16, 21, 26 &
+         1, 6, 11, &
+         16, 21, 26 &
          ]
 
       integer, parameter :: cindx(25) = [&
-         1, 2, 3, 4, 5, 2, 1, 3, 4, 5, &
-         3, 1, 2, 4, 5, 4, 1, 2, 3, 5, &
-         5, 1, 2, 3, 4 &
+         1, 2, 3, &
+         4, 5, 2, &
+         1, 3, 4, &
+         5, 3, 1, &
+         2, 4, 5, &
+         4, 1, 2, &
+         3, 5, 5, &
+         1, 2, 3, &
+         4 &
          ]
 
       type(csr_list), allocatable :: list
@@ -1087,7 +1184,8 @@ contains
       allocate(list%nlat, source = cindx)
 
       allocate(y(size(vec)), source = 0.0_wp)
-      call gemv_cmp(list, mlist, vec, y, alpha=1.0_wp, beta=0.0_wp, symmetric=.false., complete=.true.)
+      call gemv_cmp(list, mlist, vec, y, alpha=1.0_wp, beta=0.0_wp, &
+      & symmetric=.false., complete=.true.)
 
       if (any(abs(y - vrhs) > thr)) then
          call test_failed(error, "Full matrix version of the SpMV crashed.")
@@ -1098,35 +1196,50 @@ contains
       end if
 
    end subroutine test_spmv_csr_complete
+
+
    subroutine test_spmv_fullmat(error)
 
       !> Error handling
       type(error_type), allocatable, intent(out) :: error
 
       real(wp), parameter :: matrix(5,5) = reshape([ &
-         1.95301539743829E+01_wp, -1.40182420507753E+00_wp, -1.40182420319457E+00_wp, -1.40182420372164E+00_wp, -1.40182420463048E+00_wp, &
-         -1.40182420507753E+00_wp,  1.60040861485901E+01_wp, -3.28540587512732E-01_wp, -3.28540587378075E-01_wp, -3.28540587649869E-01_wp, &
-         -1.40182420319457E+00_wp, -3.28540587512732E-01_wp,  1.60040861378386E+01_wp, -3.28540587252914E-01_wp, -3.28540587468433E-01_wp, &
-         -1.40182420372164E+00_wp, -3.28540587378075E-01_wp, -3.28540587252914E-01_wp,  1.60040861396139E+01_wp, -3.28540587433195E-01_wp, &
-         -1.40182420463048E+00_wp, -3.28540587649869E-01_wp, -3.28540587468433E-01_wp, -3.28540587433195E-01_wp,  1.60040861464410E+01_wp  &
+         1.95301539743829E+01_wp, -1.40182420507753E+00_wp, -1.40182420319457E+00_wp, &
+         -1.40182420372164E+00_wp, -1.40182420463048E+00_wp, -1.40182420507753E+00_wp, &
+         1.60040861485901E+01_wp, -3.28540587512732E-01_wp, -3.28540587378075E-01_wp, &
+         -3.28540587649869E-01_wp, -1.40182420319457E+00_wp, -3.28540587512732E-01_wp, &
+         1.60040861378386E+01_wp, -3.28540587252914E-01_wp, -3.28540587468433E-01_wp, &
+         -1.40182420372164E+00_wp, -3.28540587378075E-01_wp, -3.28540587252914E-01_wp, &
+         1.60040861396139E+01_wp, -3.28540587433195E-01_wp, -1.40182420463048E+00_wp, &
+         -3.28540587649869E-01_wp, -3.28540587468433E-01_wp, -3.28540587433195E-01_wp, &
+         1.60040861464410E+01_wp &
          ], [5,5])
 
       real(wp), parameter :: vec(5) = [&
-         -1.32959314386409E-01_wp, +3.39873408224628E-02_wp, +3.39873400653214E-02_wp, +3.39873402792960E-02_wp, +3.39873406420377E-02_wp &
+         -1.32959314386409E-01_wp, +3.39873408224628E-02_wp, +3.39873400653214E-02_wp, &
+         +3.39873402792960E-02_wp, +3.39873406420377E-02_wp &
          ]
 
       real(wp), parameter :: vrhs(5) = [&
-         -2.78729298821854E+00_wp, 6.96823253402542E-01_wp, 6.96823240431084E-01_wp, 6.96823244062044E-01_wp, 6.96823250322879E-01_wp &
+         -2.78729298821854E+00_wp, 6.96823253402542E-01_wp, 6.96823240431084E-01_wp, &
+         6.96823244062044E-01_wp, 6.96823250322879E-01_wp &
          ]
 
       integer, parameter :: ptr(6) = [&
-         1, 6, 11, 16, 21, 26 &
+         1, 6, 11, &
+         16, 21, 26 &
          ]
 
       integer, parameter :: cindx(25) = [&
-         1, 2, 3, 4, 5, 2, 1, 3, 4, 5, &
-         3, 1, 2, 4, 5, 4, 1, 2, 3, 5, &
-         5, 1, 2, 3, 4 &
+         1, 2, 3, &
+         4, 5, 2, &
+         1, 3, 4, &
+         5, 3, 1, &
+         2, 4, 5, &
+         4, 1, 2, &
+         3, 5, 5, &
+         1, 2, 3, &
+         4 &
          ]
 
       type(csr_list), allocatable :: list
