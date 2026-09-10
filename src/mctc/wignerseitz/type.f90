@@ -15,9 +15,9 @@
 !> @file mctc/wignerseitz/type.f90
 !> Declaration of the cyclic cluster Wigner-Seitz type, generation, and weight evaluation
 module mctc_wignerseitz_type
+   use mctc_cutoff, only : get_lattice_points
    use mctc_env, only : wp
    use mctc_io, only : structure_type
-   use mctc_cutoff, only : get_lattice_points
    implicit none
    private
 
@@ -58,8 +58,8 @@ module mctc_wignerseitz_type
 contains
 
 
-   !> Construct a Wigner-Seitz cell for a molecular structure
-   subroutine new_wignerseitz_cell(self, mol)
+!> Construct a Wigner-Seitz cell for a molecular structure
+subroutine new_wignerseitz_cell(self, mol)
 
       !> Wigner-Seitz cell instance
       type(wignerseitz_cell), intent(out) :: self
@@ -78,7 +78,7 @@ contains
       & tridx(ntr))
 
       !$omp parallel do default(none) schedule(runtime) collapse(2) &
-      !$omp shared(mol, trans, self) private(iat, jat, vec, nimg, tridx)
+      !$omp& shared(mol, trans, self) private(iat, jat, vec, nimg, tridx)
       do iat = 1, mol%nat
          do jat = 1, mol%nat
             vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
@@ -90,11 +90,11 @@ contains
 
       call move_alloc(trans, self%trans)
 
-   end subroutine new_wignerseitz_cell
+end subroutine new_wignerseitz_cell
 
 
-   !> Find the nearest translation images for an interatomic vector
-   subroutine get_pairs(iws, trans, rij, list)
+!> Find the nearest translation images for an interatomic vector
+subroutine get_pairs(iws, trans, rij, list)
       !> Number of nearest images
       integer, intent(out) :: iws
       !> Translation vectors
@@ -143,10 +143,10 @@ contains
          list(iws) = index(pos)
       end do
 
-   end subroutine get_pairs
+end subroutine get_pairs
 
-   !> Find nearest translation images and their minimum squared distance
-   subroutine get_pairs_csr(trans, rij, iws, list, min_r2)
+!> Find nearest translation images and their minimum squared distance
+subroutine get_pairs_csr(trans, rij, iws, list, min_r2)
       !> Translation vectors
       real(wp), intent(in) :: trans(:, :)
       !> Interatomic vector
@@ -187,32 +187,32 @@ contains
          end if
       end do
 
-   end subroutine get_pairs_csr
+end subroutine get_pairs_csr
 
-   !> Compact C2 switching function for competing nearest images
-   pure elemental function smooth_image_weight(delta) result(weight)
+!> Compact C2 switching function for competing nearest images
+pure elemental function smooth_image_weight(delta) result(weight)
       !> Squared-distance difference from the nearest image
       real(wp), intent(in) :: delta
       real(wp) :: weight, x
 
       x = min(1.0_wp, max(0.0_wp, delta)/tol)
       weight = max(0.0_wp, 1.0_wp - 10.0_wp*x**3 + 15.0_wp*x**4 - 6.0_wp*x**5)
-   end function smooth_image_weight
+end function smooth_image_weight
 
 
-   !> Derivative of the compact switching function with respect to squared distance
-   pure elemental function smooth_image_weight_derivative(delta) result(derivative)
+!> Derivative of the compact switching function with respect to squared distance
+pure elemental function smooth_image_weight_derivative(delta) result(derivative)
       !> Squared-distance difference from the nearest image
       real(wp), intent(in) :: delta
       real(wp) :: derivative, x
 
       x = min(1.0_wp, max(0.0_wp, delta)/tol)
       derivative = -30.0_wp*x*x*(1.0_wp - x)**2/tol
-   end function smooth_image_weight_derivative
+end function smooth_image_weight_derivative
 
 
 !> Evaluate smooth weights for competing nearest Wigner-Seitz images
-   subroutine get_wignerseitz_weights(self, jat, iat, rij, weight, dwdr, dwdL)
+subroutine get_wignerseitz_weights(self, jat, iat, rij, weight, dwdr, dwdL)
       !> Wigner-Seitz cell instance
       type(wignerseitz_cell), intent(in) :: self
       !> Pair indices in the Wigner-Seitz image arrays
@@ -283,6 +283,6 @@ contains
          end if
       end do
 
-   end subroutine get_wignerseitz_weights
+end subroutine get_wignerseitz_weights
 
 end module mctc_wignerseitz_type

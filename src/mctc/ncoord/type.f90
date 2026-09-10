@@ -519,7 +519,7 @@ contains
 
       integer :: iat, jat, izp, jzp, itr
       real(wp) :: r2, r1, rij(3), countd(3), ds(3, 3), cutoff2, den
-      real(wp) :: idamp, jdamp, combined_factor
+      real(wp) :: idamp, jdamp, dEdcnij
 
       real(wp), allocatable :: gradient_local(:, :), sigma_local(:, :)
       real(wp), allocatable :: cn(:)
@@ -534,7 +534,7 @@ contains
       !$omp parallel default(none) &
       !$omp shared(self, mol, trans, cn, cutoff2, dEdcn, gradient, sigma) &
       !$omp private(iat, jat, itr, izp, jzp, r2, rij, r1, countd, ds, den) &
-      !$omp private(gradient_local, sigma_local, idamp, jdamp, combined_factor)
+      !$omp private(gradient_local, sigma_local, idamp, jdamp, dEdcnij)
 
       allocate(gradient_local(size(gradient, 1), size(gradient, 2)), source=0.0_wp)
       allocate(sigma_local(size(sigma, 1), size(sigma, 2)), source=0.0_wp)
@@ -556,7 +556,7 @@ contains
             if (self%cut > 0.0_wp) jdamp = dlog_cn_cut(cn(jat), self%cut)
 
             ! Combined chain-rule factor for the pair contribution
-            combined_factor = dEdcn(iat) * idamp &
+            dEdcnij = dEdcn(iat) * idamp &
             & + dEdcn(jat) * self%directed_factor * jdamp
 
             do itr = 1, size(trans, dim=2)
@@ -567,8 +567,8 @@ contains
 
                countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
 
-               gradient_local(:, iat) = gradient_local(:, iat) + countd * combined_factor
-               gradient_local(:, jat) = gradient_local(:, jat) - countd * combined_factor
+               gradient_local(:, iat) = gradient_local(:, iat) + countd * dEdcnij
+               gradient_local(:, jat) = gradient_local(:, jat) - countd * dEdcnij
 
                ds = spread(countd, 1, 3) * spread(rij, 2, 3)
 
@@ -619,7 +619,7 @@ contains
 
       integer :: iat, jat, kat, izp, jzp, itr
       real(wp) :: r2, r1, rij(3), countd(3), ds(3, 3), cutoff2, den
-      real(wp) :: idamp, jdamp, combined_factor
+      real(wp) :: idamp, jdamp, dEdcnij
       real(wp), allocatable :: cn(:)
 
       ! Thread-private arrays for reduction
@@ -637,7 +637,7 @@ contains
       !$omp parallel default(none) &
       !$omp shared(self, mol, list, trans, cutoff2, dEdcn, gradient, sigma, cn) &
       !$omp private(iat, jat, kat, itr, izp, jzp, r2, rij, r1, countd, ds, den) &
-      !$omp private(gradient_local, sigma_local, idamp, jdamp, combined_factor)
+      !$omp private(gradient_local, sigma_local, idamp, jdamp, dEdcnij)
       allocate(gradient_local(size(gradient, 1), size(gradient, 2)), source=0.0_wp)
       allocate(sigma_local(size(sigma, 1), size(sigma, 2)), source=0.0_wp)
       !$omp do schedule(runtime)
@@ -658,7 +658,7 @@ contains
             if (self%cut > 0.0_wp) jdamp = dlog_cn_cut(cn(jat), self%cut)
 
             ! Combined chain-rule factor for the pair contribution
-            combined_factor = dEdcn(iat) * idamp &
+            dEdcnij = dEdcn(iat) * idamp &
             & + dEdcn(jat) * self%directed_factor * jdamp
 
             do itr = 1, size(trans, dim=2)
@@ -669,8 +669,8 @@ contains
 
                countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
 
-               gradient_local(:, iat) = gradient_local(:, iat) + countd * combined_factor
-               gradient_local(:, jat) = gradient_local(:, jat) - countd * combined_factor
+               gradient_local(:, iat) = gradient_local(:, iat) + countd * dEdcnij
+               gradient_local(:, jat) = gradient_local(:, jat) - countd * dEdcnij
 
                ds = spread(countd, 1, 3) * spread(rij, 2, 3)
 

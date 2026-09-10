@@ -22,8 +22,8 @@
 !> and Linear Algebra procedures based on this saprsity structure.
 
 module mctc_csrlist
+   use mctc_csrlist_linal, only : spmv_csr
    use mctc_csrlist_type, only : csr_list, new_csr_list, compute_grid, get_linked_cell
-   use mctc_csrlist_linal, only : gemv_cmp
    implicit none
    public
 
