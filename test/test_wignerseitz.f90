@@ -14,13 +14,13 @@
 ! limitations under the License.
 
 module test_wignerseitz
+   use mctc_cutoff, only: get_lattice_points
    use mctc_env, only: wp
    use mctc_env_testing, only: new_unittest, unittest_type, error_type, check, &
-   & test_failed
+      & test_failed
    use mctc_io_structure, only: structure_type
-   use mctc_cutoff, only: get_lattice_points
+   use mctc_wignerseitz, only : wignerseitz_cell, new_wignerseitz_cell
    use testsuite_structure, only : get_structure
-   use mctc_wignerseitz
    implicit none
    private
 
@@ -33,116 +33,116 @@ module test_wignerseitz
 contains
 
 !> Collect all exported unit tests
-   subroutine collect_wignerseitz(testsuite)
+subroutine collect_wignerseitz(testsuite)
 
-      !> Collection of tests
-      type(unittest_type), allocatable, intent(out) :: testsuite(:)
+   !> Collection of tests
+   type(unittest_type), allocatable, intent(out) :: testsuite(:)
 
-      testsuite = [ &
+   testsuite = [ &
       & new_unittest("lattice-points-0d", test_latticepoints_0d), &
       & new_unittest("lattice-points-3d", test_latticepoints_3d), &
       & new_unittest("wignerseitz-cell-0d", test_wsc_0d), &
       & new_unittest("wignerseitz-cell-3d", test_wsc_3d) &
       & ]
 
-   end subroutine collect_wignerseitz
+end subroutine collect_wignerseitz
 
-   subroutine test_latticepoints_0d(error)
+subroutine test_latticepoints_0d(error)
 
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
 
-      type(structure_type) :: mol
-      real(wp), allocatable :: trans(:, :)
-      real(wp), parameter :: cutoff = 25.0_wp
+   type(structure_type) :: mol
+   real(wp), allocatable :: trans(:, :)
+   real(wp), parameter :: cutoff = 25.0_wp
 
-      call get_structure(mol, "mindless02")
+   call get_structure(mol, "mindless02")
 
-      call get_lattice_points(mol%periodic, mol%lattice, thr2, trans)
+   call get_lattice_points(mol%periodic, mol%lattice, thr2, trans)
 
-      call check(error, size(trans, 1), 3)
-      if (allocated(error)) return
+   call check(error, size(trans, 1), 3)
+   if (allocated(error)) return
 
-      call check(error, size(trans, 2), 1)
-      if (allocated(error)) return
+   call check(error, size(trans, 2), 1)
+   if (allocated(error)) return
 
-      call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans)
+   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans)
 
-      call check(error, size(trans, 1), 3)
-      if (allocated(error)) return
+   call check(error, size(trans, 1), 3)
+   if (allocated(error)) return
 
-      call check(error, size(trans, 2), 1)
-      if (allocated(error)) return
+   call check(error, size(trans, 2), 1)
+   if (allocated(error)) return
 
-   end subroutine test_latticepoints_0d
+end subroutine test_latticepoints_0d
 
-   subroutine test_latticepoints_3d(error)
+subroutine test_latticepoints_3d(error)
 
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
 
-      type(structure_type) :: mol
-      real(wp), allocatable :: trans(:, :)
-      real(wp), parameter :: cutoff = 25.0_wp
+   type(structure_type) :: mol
+   real(wp), allocatable :: trans(:, :)
+   real(wp), parameter :: cutoff = 25.0_wp
 
-      call get_structure(mol, "ice-ii")
+   call get_structure(mol, "ice-ii")
 
-      call get_lattice_points(mol%periodic, mol%lattice, thr2, trans)
+   call get_lattice_points(mol%periodic, mol%lattice, thr2, trans)
 
-      call check(error, size(trans, 1), 3)
-      if (allocated(error)) return
+   call check(error, size(trans, 1), 3)
+   if (allocated(error)) return
 
-      call check(error, size(trans, 2), 27)
-      if (allocated(error)) return
+   call check(error, size(trans, 2), 27)
+   if (allocated(error)) return
 
-      call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans)
+   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans)
 
-      call check(error, size(trans, 1), 3)
-      if (allocated(error)) return
+   call check(error, size(trans, 1), 3)
+   if (allocated(error)) return
 
-      call check(error, size(trans, 2), 343)
-      if (allocated(error)) return
+   call check(error, size(trans, 2), 343)
+   if (allocated(error)) return
 
-   end subroutine test_latticepoints_3d
+end subroutine test_latticepoints_3d
 
-   subroutine test_wsc_0d(error)
+subroutine test_wsc_0d(error)
 
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
 
-      type(structure_type) :: mol
-      type(wignerseitz_cell) :: wsc
+   type(structure_type) :: mol
+   type(wignerseitz_cell) :: wsc
 
-      call get_structure(mol, "mindless02")
+   call get_structure(mol, "mindless02")
 
-      call new_wignerseitz_cell(wsc, mol)
+   call new_wignerseitz_cell(wsc, mol)
 
-      call check(error, size(wsc%trans, 1), 3)
-      if (allocated(error)) return
+   call check(error, size(wsc%trans, 1), 3)
+   if (allocated(error)) return
 
-      call check(error, size(wsc%trans, 2), 1)
-      if (allocated(error)) return
+   call check(error, size(wsc%trans, 2), 1)
+   if (allocated(error)) return
 
-   end subroutine test_wsc_0d
+end subroutine test_wsc_0d
 
-   subroutine test_wsc_3d(error)
+subroutine test_wsc_3d(error)
 
-      !> Error handling
-      type(error_type), allocatable, intent(out) :: error
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
 
-      type(structure_type) :: mol
-      type(wignerseitz_cell) :: wsc
+   type(structure_type) :: mol
+   type(wignerseitz_cell) :: wsc
 
-      call get_structure(mol, "pyrazole")
+   call get_structure(mol, "pyrazole")
 
-      call new_wignerseitz_cell(wsc, mol)
+   call new_wignerseitz_cell(wsc, mol)
 
-      call check(error, size(wsc%trans, 1), 3)
-      if (allocated(error)) return
+   call check(error, size(wsc%trans, 1), 3)
+   if (allocated(error)) return
 
-      call check(error, size(wsc%trans, 2), 27)
-      if (allocated(error)) return
+   call check(error, size(wsc%trans, 2), 27)
+   if (allocated(error)) return
 
-   end subroutine test_wsc_3d
+end subroutine test_wsc_3d
 
 end module test_wignerseitz
