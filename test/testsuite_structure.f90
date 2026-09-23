@@ -89,7 +89,7 @@ subroutine mindless02(self)
    type(structure_type), intent(out) :: self
    integer, parameter :: nat = 16
    character(len=*), parameter :: sym(nat) = [character(len=2) ::&
-     & "H", "S", "B", "O", "Mg", "H", "H", "H", "Si", "H", "B", "Li", "F", "H", "H", "S"]
+      & "H", "S", "B", "O", "Mg", "H", "H", "H", "Si", "H", "B", "Li", "F", "H", "H", "S"]
    real(wp), parameter :: xyz(3, nat) = reshape([&
       & -1.79537625851198_wp, -3.77866422935275_wp, -1.07883558363403_wp, &
       & -2.68278833302782_wp,  0.38892666265890_wp,  1.66214865238427_wp, &
@@ -376,10 +376,10 @@ subroutine x01(self)
       &  3.02585151643235_wp, 10.74223721977969_wp,  1.45047192019470_wp],&
       & shape(xyz))
    real(wp), parameter :: lattice(3, 3) = reshape([&
-   & 12.17191845_wp,  0.09308248_wp,  0.41423668_wp, &
-   &  0.08731987_wp, 12.55440630_wp,  0.31568135_wp, &
-   &  0.42750296_wp, -1.80907922_wp, 12.77606779_wp],&
-   & shape(lattice))
+      & 12.17191845_wp,  0.09308248_wp,  0.41423668_wp, &
+      &  0.08731987_wp, 12.55440630_wp,  0.31568135_wp, &
+      &  0.42750296_wp, -1.80907922_wp, 12.77606779_wp],&
+      & shape(lattice))
    call new(self, sym, xyz, lattice=lattice)
 end subroutine x01
 
