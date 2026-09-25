@@ -194,7 +194,6 @@ contains
 
    end subroutine get_coordination_number
 
-
    !> Evaluates coordination numbers
    subroutine ncoord(self, mol, trans, cn)
       !> Coordination number container
@@ -409,7 +408,12 @@ contains
       !> Error function coordination number.
       real(wp), intent(out) :: cn(:)
       !> Derivative of the CN with respect to the Cartesian coordinates.
-      real(wp), intent(out) :: dcndrij(:, :), dcndrji(:, :), dcndrdiag(:, :)
+      !> Off-diagonal upper-triangle elements
+      real(wp), intent(out) :: dcndrij(:, :)
+      !> Off-diagonal lower-triangle elements
+      real(wp), intent(out) :: dcndrji(:, :)
+      !> Diagonal elements
+      real(wp), intent(out) :: dcndrdiag(:, :)
       !> Derivative of the CN with respect to strain deformations.
       real(wp), intent(out) :: dcndL(:, :, :)
       !> CSR list for neighbourlist-based CN evaluation
@@ -601,17 +605,14 @@ contains
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
 
-
       !> Lattice points
       real(wp), intent(in) :: trans(:, :)
 
       !> Derivative of the expression with respect to the coordination number
       real(wp), intent(in) :: dEdcn(:)
 
-
       !> Derivative of the CN with respect to the Cartesian coordinates
       real(wp), intent(inout) :: gradient(:, :)
-
 
       !> Derivative of the CN with respect to strain deformations
       real(wp), intent(inout) :: sigma(:, :)
@@ -694,7 +695,6 @@ contains
       !$omp end parallel
 
    end subroutine add_coordination_number_derivs_list
-
 
    !> Add dE/dCN contracted with the Cartesian Hessian of the
    !> coordination numbers.

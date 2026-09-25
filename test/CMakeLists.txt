@@ -16,6 +16,7 @@
 set(
   tests
   "cutoff"
+  "csrlist"
   "data"
   "math"
   "ncoord"
@@ -34,6 +35,8 @@ set(
   "read-vasp"
   "read-xyz"
   "symbols"
+  "timer"
+  "wignerseitz"
   "write"
   "write-aims"
   "write-cjson"
@@ -47,9 +50,6 @@ set(
   "write-turbomole"
   "write-vasp"
   "write-xyz"
-  "timer"
-  "csrlist"
-  "wignerseitz"
 )
 set(
   test-srcs

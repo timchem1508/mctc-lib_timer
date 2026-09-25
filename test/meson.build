@@ -14,6 +14,7 @@
 
 tests = [
   'cutoff',
+  'csrlist',
   'data',
   'math',
   'ncoord',
@@ -32,6 +33,8 @@ tests = [
   'read-vasp',
   'read-xyz',
   'symbols',
+  'timer',
+  'wignerseitz',
   'write',
   'write-aims',
   'write-cjson',
@@ -45,9 +48,6 @@ tests = [
   'write-turbomole',
   'write-vasp',
   'write-xyz',
-  'timer',
-  'csrlist',
-  'wignerseitz',
 ]
 
 test_srcs = files(

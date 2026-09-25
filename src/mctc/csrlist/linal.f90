@@ -106,7 +106,7 @@ subroutine spmv_csr_111_standard(list, mlist, x, y, alpha, beta, symmetric, comp
 
    if (is_csr .or. (.not. is_sym)) then
       ! Full CSR or non-symmetric
-      !$omp parallel do default(none) schedule(static)&
+      !$omp parallel do default(none) schedule(guided)&
       !$omp& private(i, k, j, y_tmp_i) &
       !$omp& shared(list, mlist, x, y, alpha, beta, n)
       do i = 1, n
@@ -148,7 +148,7 @@ subroutine spmv_csr_111_standard(list, mlist, x, y, alpha, beta, symmetric, comp
       allocate(y_priv(ny))
       y_priv = 0.0_wp
 
-      !$omp do schedule(static)
+      !$omp do schedule(guided)
       do i = 1, n
          y_tmp_i = 0.0_wp
          do k = list%inl(i), list%inl(i+1) - 1
@@ -241,7 +241,7 @@ subroutine spmv_csr_111(list, mlist, mdiag, x, y, alpha, beta, symmetric)
    allocate(y_priv(ny))
    y_priv = 0.0_wp
 
-   !$omp do schedule(static)
+   !$omp do schedule(guided)
    do i = 1, n
       y_tmp_i = a * mdiag(i) * x(i)
       do k = list%inl(i) + 1, list%inl(i+1) - 1
@@ -322,7 +322,7 @@ subroutine spmv_csr_211_standard(list, matr, x, y, alpha, beta, symmetric, compl
       !$omp parallel do default(none) &
       !$omp& private(i, k, j, y_tmp_i) &
       !$omp& shared(list, matr, x, y, alpha, beta, n) &
-      !$omp& schedule(static)
+      !$omp& schedule(dynamic)
       do i = 1, n
          if (beta == 0.0_wp) then
             y_tmp_i = 0.0_wp
@@ -362,7 +362,7 @@ subroutine spmv_csr_211_standard(list, matr, x, y, alpha, beta, symmetric, compl
       allocate(y_priv(ny))
       y_priv = 0.0_wp
 
-      !$omp do schedule(static)
+      !$omp do schedule(guided)
       do i = 1, n
          y_tmp_i = 0.0_wp
          do k = list%inl(i), list%inl(i+1) - 1
@@ -403,8 +403,7 @@ end subroutine spmv_csr_211_standard
 
 
 !> Multiply two CSR matrices given in complete storage, the product is
-!> accumulated on the sparsity pattern of the output list. Contributions
-!> falling outside of this pattern are discarded.
+!> accumulated on the sparsity pattern of the output list.
 subroutine spmm_csr_111(lista, alist, listb, blist, listc, clist, alpha, beta)
 
    !> CSR neighbour-list structure of the left operand
@@ -458,7 +457,7 @@ subroutine spmm_csr_111(lista, alist, listb, blist, listc, clist, alpha, beta)
    allocate(flag(ncol), source=.false.)
    allocate(touch(ncol), source=0)
 
-   !$omp do schedule(runtime)
+   !$omp do schedule(guided)
    do i = 1, n
       ! Gather the row i of the product in the dense accumulator
       ntouch = 0

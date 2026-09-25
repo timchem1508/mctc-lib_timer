@@ -13,6 +13,6 @@
 # limitations under the License.
 
 srcs += files(
-  'type.f90',
   'linal.f90',
+  'type.f90',
 )
