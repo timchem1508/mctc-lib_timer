@@ -12,7 +12,7 @@
 ! See the License for the specific language governing permissions and
 ! limitations under the License.
 
-!> Unit tests for compressed sparse row neighbour lists
+!> Unit tests for compressed sparse row neighbor lists
 module test_csrlist
    use mctc_csrlist, only : csr_list, new_csr_list, compute_grid, &
       & get_linked_cell, spmv_csr, spmm_csr
@@ -93,16 +93,16 @@ subroutine gen_verlet(mol, trans, cutoff, row_ptr, col_ind, nltr, complete)
    !> Translation vectors for all images
    real(wp), intent(in) :: trans(:, :)
 
-   !> Realspace cutoff for neighbourlist generation
+   !> Realspace cutoff for neighborlist generation
    real(wp), intent(in) :: cutoff
 
    !> Standard 1-based row pointer array of size (nat + 1)
    integer, intent(inout) :: row_ptr(:)
 
-   !> Column indices / neighbouring atom indices (nlat)
+   !> Column indices / neighboring atom indices (nlat)
    integer, allocatable, intent(out) :: col_ind(:)
 
-   !> Cell index of the neighbouring atom
+   !> Cell index of the neighboring atom
    integer, allocatable, intent(out) :: nltr(:)
 
    !> Whether a complete or a symmetrical upper-triangular map should be generated
@@ -127,7 +127,7 @@ subroutine gen_verlet(mol, trans, cutoff, row_ptr, col_ind, nltr, complete)
       col_ind(nnz) = iat
       nltr(nnz) = 1
 
-      ! 2. Off-Diagonal Neighbours (inverse to fit the linked-cell list ordering)
+      ! 2. Off-Diagonal neighbors (inverse to fit the linked-cell list ordering)
       do jat = 1, mol%nat
          ! Skip lower triangle if incomplete
          if (.not. complete .and. jat < iat) cycle
@@ -253,7 +253,7 @@ subroutine test_distance(error, mol, cutoff, trans, cmp)
    integer(i8) :: kat
 
    allocate(list)
-   call new_csr_list(list, mol, cutoff=cutoff, trans=trans, complete=cmp)
+   call new_csr_list(list, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
 
    do iat = 1, mol%nat
       do kat = list%inl(iat) + 1, list%inl(iat+1) - 1
@@ -266,7 +266,7 @@ subroutine test_distance(error, mol, cutoff, trans, cmp)
          vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - trans(:, itr)
          if (sum(vec**2) >= cutoff**2) then
             call test_failed(error, &
-               & "The pair in the neighbour list is outside the cutoff radius.")
+               & "The pair in the neighbor list is outside the cutoff radius.")
             exit
          end if
       end do
@@ -299,13 +299,13 @@ subroutine test_mol_list_gen(error, mol, cutoff, trans, cmp)
    integer(i8) :: kat
 
    allocate(list)
-   call new_csr_list(list, mol, cutoff=cutoff, trans=trans, complete=cmp)
+   call new_csr_list(list, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
 
    allocate(ref_ptr(mol%nat + 1))
    call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp)
 
    if (any(list%inl /= ref_ptr)) then
-      call test_failed(error, "Neighbour list pointer array does not match reference.")
+      call test_failed(error, "neighbor list pointer array does not match reference.")
       print"(20a)", "Generated pointer:"
       print"(10i6)", list%inl
       print"(20a)", "Reference pointer:"
@@ -316,7 +316,7 @@ subroutine test_mol_list_gen(error, mol, cutoff, trans, cmp)
       do kat = list%inl(iat), list%inl(iat+1) - 1
          jat = list%nlat(kat)
          if (.not. any(jat == ref_list(ref_ptr(iat):ref_ptr(iat+1)-1))) then
-            call test_failed(error, "Neighbour list array does not match reference.")
+            call test_failed(error, "neighbor list array does not match reference.")
             print"(20a)", "Generated list:"
             print"(10i6)", list%nlat
             print"(20a)", "Reference list:"
@@ -324,7 +324,7 @@ subroutine test_mol_list_gen(error, mol, cutoff, trans, cmp)
             exit
          end if
          if (any(jat == list%nlat(kat+1:list%inl(iat+1)-1))) then
-            call test_failed(error, "Neighbours duplicates.")
+            call test_failed(error, "neighbors duplicates.")
             exit
          end if
       end do
@@ -357,13 +357,13 @@ subroutine test_pbc_list_gen(error, mol, cutoff, trans, cmp)
    integer(i8) :: kat
 
    allocate(list)
-   call new_csr_list(list, mol, cutoff=cutoff, trans=trans, complete=cmp)
+   call new_csr_list(list, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
 
    allocate(ref_ptr(mol%nat + 1))
    call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp)
 
    if (any(list%inl /= ref_ptr)) then
-      call test_failed(error, "Neighbour list pointer array does not match reference.")
+      call test_failed(error, "neighbor list pointer array does not match reference.")
       write(*,*) "Generated pointer:", list%inl
       write(*,*) "Reference pointer:", ref_ptr
    end if
@@ -373,7 +373,7 @@ subroutine test_pbc_list_gen(error, mol, cutoff, trans, cmp)
          jat = list%nlat(kat)
          tr = list%nltr(kat)
          if (.not. any(jat == ref_list(ref_ptr(iat):ref_ptr(iat+1)-1))) then
-            call test_failed(error, "Neighbour list array does not match reference.")
+            call test_failed(error, "neighbor list array does not match reference.")
             print"(20a)", "Generated list:"
             print"(10i6)", list%nlat
             print"(20a)", "Reference list:"
@@ -382,7 +382,7 @@ subroutine test_pbc_list_gen(error, mol, cutoff, trans, cmp)
          end if
          if (.not. any(tr == ref_nltr(ref_ptr(iat):ref_ptr(iat+1)-1))) then
             call test_failed(error, &
-               & "Neighbour list translations array does not match reference.")
+               & "neighbor list translations array does not match reference.")
             print"(20a)", "Generated translations:"
             print"(10i6)", list%nltr
             print"(20a)", "Reference translations:"
@@ -408,28 +408,27 @@ subroutine test_wsc(error, mol, cutoff, cmp, ref_list, ref_nimg)
    !> Whether a complete or a symmetrical reduced map should be generated
    logical, intent(in) :: cmp
 
-   !> Reference neighbour list
+   !> Reference neighbor list
    integer, intent(in) :: ref_list(:)
 
    !> Reference array of the number of translation images
    integer, intent(in) :: ref_nimg(:)
 
    type(csr_list), allocatable :: list
-   type(wignerseitz_cell), allocatable :: wsc
+   type(wignerseitz_cell) :: wsc
    integer :: iat, jat, ntr, tridx
    integer(i8) :: itr, kat
    real(wp) :: vec(3)
 
    allocate(list)
-   allocate(wsc)
-   call new_csr_list(list, mol, wsc, cutoff=cutoff, complete=cmp)
+   call new_csr_list(list, mol, error, wsc, cutoff=cutoff, complete=cmp)
 
    do iat = 1, mol%nat
       do kat = list%inl(iat), list%inl(iat+1) - 1
          jat = list%nlat(kat)
-         ntr = list%wsc%nimg_list(kat)
+         ntr = wsc%nimg_list(kat)
          if (.not. any(jat == ref_list(list%inl(iat): list%inl(iat+1) - 1))) then
-            call test_failed(error, "Neighbour list array does not match reference.")
+            call test_failed(error, "neighbor list array does not match reference.")
             print"(20a)", "Generated list:"
             print"(10i6)", list%nlat
             print"(20a)", "Reference list:"
@@ -438,21 +437,21 @@ subroutine test_wsc(error, mol, cutoff, cmp, ref_list, ref_nimg)
          end if
          if (.not. ntr == ref_nimg(kat)) then
             call test_failed(error, &
-               & "Neighbour list WSC translations number array does not match " // &
+               & "neighbor list WSC translations number array does not match " // &
                & "reference.")
             print"(20a)", "Generated translations:"
-            print"(10i6)", list%wsc%nimg_list
+            print"(10i6)", wsc%nimg_list
             print"(20a)", "Reference translations:"
             print"(10i6)", ref_nimg
             exit
          end if
-         do itr = list%wsc%itr_list(kat), list%wsc%itr_list(kat+1) - 1
-            tridx = list%wsc%tridx_list(itr)
+         do itr = wsc%itr_list(kat), wsc%itr_list(kat+1) - 1
+            tridx = wsc%tridx_list(itr)
             vec = mol%xyz(:, jat) - mol%xyz(:, iat) &
-               & + list%wsc%trans(:, list%wsc%tridx_list(itr))
+               & + wsc%trans(:, wsc%tridx_list(itr))
             if (sum(vec**2) >= cutoff**2) then
                call test_failed(error, &
-                  & "The pair in the neighbour list is outside the cutoff radius.")
+                  & "The pair in the neighbor list is outside the cutoff radius.")
                exit
             end if
          end do
@@ -990,7 +989,7 @@ subroutine test_nacl_wsc(error)
 
    type(structure_type) :: mol
    real(wp), parameter :: cutoff = 29.0_wp
-   ! Reference neighbour list
+   ! Reference neighbor list
    integer, parameter :: ref_list(3) = [1, 2, 2]
    ! Reference array of the number of translation images
    integer, parameter :: ref_nimg(3) = [12, 6, 12]
@@ -1007,7 +1006,7 @@ subroutine test_feo2_wsc(error)
    type(structure_type) :: mol
    real(wp), parameter :: cutoff = 29.0_wp
 
-   ! Reference neighbour list
+   ! Reference neighbor list
    integer, parameter :: ref_list(6) = [1, 3, 2, 2, 3, 3]
    ! Reference array of the number of translation images
    integer, parameter :: ref_nimg(6) = [6, 3, 3, 6, 3, 6]
