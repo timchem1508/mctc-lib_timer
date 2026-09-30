@@ -15,6 +15,7 @@
 tests = [
   'cutoff',
   'csrlist',
+  'csrlist-linal',
   'data',
   'math',
   'ncoord',

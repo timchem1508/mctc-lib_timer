@@ -56,7 +56,7 @@ module mctc_csrlist_type
    implicit none
    private
 
-   public :: csr_list, new_csr_list, compute_grid, get_linked_cell
+   public :: csr_list, new_csr_list, compute_grid, get_linked_cell, grid_type
 
    !> neighborlist in CSR format
    type :: csr_list
@@ -96,12 +96,11 @@ module mctc_csrlist_type
       !> Total number of linked cells
       integer :: ncell = 0
 
-      !> Periodic wrap-around of the grid
+      !> Periodic boundaries flag of the grid
       logical :: periodic = .false.
 
-      !> Every stencil cell is distinct and holds a single image of its atoms,
-      !> so the translation of a pair follows from the wrap-around alone and
-      !> the loop over all translations can be skipped
+      !> If true, every neighboring linked cell is a periodic unit cell, i.e.,
+      !> its lattice translation follows directly from the PBCs
       logical :: single = .false.
 
       !> Stencil offsets of the cells scanned for each cell
@@ -116,8 +115,8 @@ module mctc_csrlist_type
       !> Cell-ordered coordinates, kept as separate streams for vectorisation
       real(wp), allocatable :: x(:), y(:), z(:)
 
-      !> Map of the integer lattice shifts,
-      !> based on the translation vectors and reciprocal lattice
+      !> Index of the lattice translation for each pbc shift in
+      !> {-1,0,1}^3, zero if no translation vector matches that image
       integer :: trmap(-1:1, -1:1, -1:1) = 0
    end type grid_type
 
@@ -135,7 +134,7 @@ module mctc_csrlist_type
    real(wp), parameter :: buffer = 0.1_wp
 
    !> Relative tolerance used for fractional coordinates examination
-   real(wp), parameter :: wrap_snap = 1.0e-12_wp
+   real(wp), parameter :: frac_tol = 1.0e-12_wp
 
    !> Tolerance for identifying a translation vector with an integer lattice shift
    real(wp), parameter :: shift_tol = 1.0e-8_wp
@@ -177,13 +176,10 @@ subroutine new_csr_list(self, mol, error, wsc, cutoff, trans, complete)
    if (present(trans)) self%trans = trans
 
    if (any(mol%periodic) .and. present(wsc)) then
-      ! Generate the CSR neighbor list with WSC cyclic periodic boundaries,
-      ! saving the detected lattice translations in the WSC type lists
+      ! Generate the neighborlist and wsc type objects simultaneously
       call build_list(self, mol, error, wsc)
    else
-      ! Generate the CSR neighbor list for molecular or periodic systems,
-      ! saving all peridic interactions into the `nlat` array, keeping their
-      ! periodic images in the `ntr` array
+      ! Generate the CSR neighbor list for molecular or periodic systems
       call build_list(self, mol, error)
    end if
 
@@ -212,7 +208,7 @@ subroutine build_list(self, mol, error, wsc)
    real(wp) :: cutoff2, lat_inv(3, 3), cell_w(3), min_xyz(3), zero_vec(3), r2_min, det
 
    integer, allocatable :: cnt(:), icnt(:)
-   integer(i8), allocatable :: ioff(:)
+   integer(i8), allocatable :: tridx(:)
    real(wp), allocatable :: trans(:, :)
 
    nat = mol%nat
@@ -243,23 +239,21 @@ subroutine build_list(self, mol, error, wsc)
    allocate(self%inl(nat + 1), source=1_i8)
    if (nat <= 0) return
 
-   ! 2. Linked cell grid and cell-sorted copy of the atoms
-   ! Each orthogonal height of the linked-cell is larger
+   ! 2. Linked cell grid. Each orthogonal height of the linked-cell is larger
    ! or equal to the cutoff distance.
-   call compute_grid(mol, self%cutoff, det, n_xyz, lat_inv, cell_w)
-   grid%n_xyz = n_xyz
-   grid%ncell = n_xyz(1)*n_xyz(2)*n_xyz(3)
-   grid%periodic = periodic
+   call compute_grid(mol, self%cutoff, grid, det, lat_inv, cell_w)
    if (.not. periodic) min_xyz = minval(mol%xyz, dim=2) - buffer
    ! Fill the atoms into the linked-cell grid and sort them accordingly
    call sort_atoms(mol, grid, lat_inv, min_xyz, cell_w, lshift)
 
-   ! 3. Stencil of cells scanned around each cell.
+   ! 3. Stencil of neighboring linked cells examined around each cell.
    call build_stencil(grid, lmulti)
 
-   ! Create proper translation map for the single image shortcut
+   ! For a case where the grid consists of a single cell
    grid%single = periodic .and. .not. use_wsc .and. .not. lmulti .and. .not. lshift
    if (grid%single) then
+      ! Fill `trmap` by mapping each translation vector with an integer lattice shift
+      ! in {-1,0,1}^3 set to its index in the translation list
       call build_shift_map(grid, self%trans, lat_inv)
       grid%single = grid%trmap(0, 0, 0) > 0
    end if
@@ -276,29 +270,24 @@ subroutine build_list(self, mol, error, wsc)
    ! and prepares the `inl` array
    allocate(cnt(nat), source=0)
    allocate(icnt(nat), source=0)
-   if (use_wsc) allocate(ioff(nat + 1), source=1_i8)
-   isok = .true.
-   call neighbor_pass(self, grid, .false., ioff, cnt, icnt, nself, self_tridx, &
-      & nimg_max, isok, wsc)
+   if (use_wsc) allocate(tridx(nat + 1), source=1_i8)
+   call neighbor_pass(self, grid, .false., tridx, cnt, icnt, nself, self_tridx, &
+      & nimg_max, wsc, error)
 
-   ! 6. CSR pointer array
-   do iat = 1, nat
-      if (cnt(iat) < 0) then
-         call fatal_error(error, "[Fatal] neighbor list of a single atom exceeds "// &
-            & "the addressable range of the CSR index arrays")
-         return
-      end if
-      self%inl(iat + 1) = self%inl(iat) + int(cnt(iat), i8) + 1_i8
-   end do
-   npair = self%inl(nat + 1) - 1_i8
-
+   ! 6. CSR pointer array filling
    nimgs = 0_i8
    if (use_wsc) then
       do iat = 1, nat
-         ioff(iat + 1) = ioff(iat) + int(icnt(iat), i8)
+         self%inl(iat + 1) = self%inl(iat) + int(cnt(iat), i8) + 1_i8
+         tridx(iat + 1) = tridx(iat) + int(icnt(iat), i8)
       end do
-      nimgs = ioff(nat + 1_i8) - 1_i8
+      nimgs = tridx(nat + 1_i8) - 1_i8
+   else
+      do iat = 1, nat
+         self%inl(iat + 1) = self%inl(iat) + int(cnt(iat), i8) + 1_i8
+      end do
    end if
+   npair = self%inl(nat + 1) - 1_i8
 
    ! 7. Allocate of the CSR arrays
    allocate(self%nlat(npair))
@@ -311,14 +300,8 @@ subroutine build_list(self, mol, error, wsc)
    end if
 
    ! 8. Filling pass
-   call neighbor_pass(self, grid, .true., ioff, cnt, icnt, nself, self_tridx, &
-      & nimg_max, isok, wsc)
-
-   if (.not. isok) then
-      call fatal_error(error, "[Fatal] counting and filling pass of the "// &
-         & "neighbor list disagree")
-      return
-   end if
+   call neighbor_pass(self, grid, .true., tridx, cnt, icnt, nself, self_tridx, &
+      & nimg_max, wsc, error)
 
    if (use_wsc) then
       wsc%nimg_max = nimg_max
@@ -328,8 +311,8 @@ subroutine build_list(self, mol, error, wsc)
 end subroutine build_list
 
 !> Counting and filling pass over all cell pairs
-subroutine neighbor_pass(self, grid, lstore, ioff, cnt, icnt, nself, &
-   & self_tridx, nimg_max, isok, wsc)
+subroutine neighbor_pass(self, grid, lstore, tridx, cnt, icnt, nself, &
+   & self_tridx, nimg_max, wsc, error)
 
    !> Instance of the neighborlist, filled if lstore is set
    type(csr_list), intent(inout) :: self
@@ -341,7 +324,7 @@ subroutine neighbor_pass(self, grid, lstore, ioff, cnt, icnt, nself, &
    logical, intent(in) :: lstore
 
    !> Offset of each atom into the image index array, only used when storing
-   integer(i8), intent(in), optional :: ioff(:)
+   integer(i8), intent(in), optional :: tridx(:)
 
    !> Number of neighbors of each atom, excluding the diagonal entry
    integer, intent(inout) :: cnt(:)
@@ -358,14 +341,15 @@ subroutine neighbor_pass(self, grid, lstore, ioff, cnt, icnt, nself, &
    !> Largest number of images found for a single pair
    integer, intent(inout) :: nimg_max
 
-   !> Consistency flag, cleared if the two passes disagree
-   logical, intent(inout) :: isok
-
    !> Wigner-Seitz cell type, enables the Wigner-Seitz image search
    type(wignerseitz_cell), intent(inout), optional :: wsc
 
+   !> Error message, set if the two passes disagree
+   type(error_type), allocatable, intent(out) :: error
+
    integer :: nsten, ntr, nmax
-   integer :: ic, s, ns, jc, p, p0, p1, q, q0, q1, t, t0, t1
+   integer :: ic, shift, ns, jc, lcatidx, lcatidxst, lcatidxfin
+   integer :: checkat, checkatst, checkatfin, tr, trst, trfin
    integer :: iat, jmin, nn, nimgs, nimg_count, tridx_arr(27)
    integer(i8) :: pos, itp
    real(wp) :: cutoff2, xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, r2_min, vec(3)
@@ -385,12 +369,13 @@ subroutine neighbor_pass(self, grid, lstore, ioff, cnt, icnt, nself, &
    nmax = 0
 
    !$omp parallel default(none)&
-   !$omp& private(ic, s, ns, jc, p, p0, p1, q, q0, q1, t, t0, t1) &
+   !$omp& private(ic, shift, ns, jc, lcatidx, lcatidxst, lcatidxfin) &
+   !$omp& private(checkat, checkatst, checkatfin, tr, trst, trfin) &
    !$omp& private(iat, jmin, nn, nimgs, nimg_count, tridx_arr, pos, itp) &
    !$omp& private(xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, r2_min, vec) &
    !$omp& private(jcl, itrl) &
-   !$omp& shared(grid, self, lstore, ioff, cnt, icnt, nself, self_tridx) &
-   !$omp& shared(nimg_max, isok, wsc, cutoff2, complete, use_wsc, lnltr) &
+   !$omp& shared(grid, error, self, lstore, tridx, cnt, icnt, nself, self_tridx) &
+   !$omp& shared(nimg_max, wsc, cutoff2, complete, use_wsc, lnltr) &
    !$omp& shared(nsten, ntr, trans) &
    !$omp& reduction(max: nmax)
    allocate(jcl(nsten), itrl(nsten))
@@ -398,19 +383,19 @@ subroutine neighbor_pass(self, grid, lstore, ioff, cnt, icnt, nself, &
    !$omp do schedule(runtime)
    ! Loop over all cells in the grid instead of each individual atom
    do ic = 1, grid%ncell
-      p0 = grid%start(ic)
-      p1 = grid%start(ic + 1) - 1
-      if (p1 < p0) cycle
+      lcatidxst = grid%start(ic)
+      lcatidxfin = grid%start(ic + 1) - 1
+      if (lcatidxfin < lcatidxst) cycle
 
-      ! A. The stencil is resolved once per cell, not once per atom
+      ! A. Obtain which neighboring cells are should be examined
       call resolve_stencil(grid, ic, jcl, itrl, ns)
 
-      ! B. All atoms of the cell share the stencil resolved above
-      do p = p0, p1
-         iat = grid%cellatidx(p)
-         xi = grid%x(p)
-         yi = grid%y(p)
-         zi = grid%z(p)
+      ! B. Loop over all atoms in the current cell
+      do lcatidx = lcatidxst, lcatidxfin
+         iat = grid%cellatidx(lcatidx)
+         xi = grid%x(lcatidx)
+         yi = grid%y(lcatidx)
+         zi = grid%z(lcatidx)
 
          ! Upper triangular (jat > iat) or complete mode.
          if (complete) then
@@ -432,7 +417,7 @@ subroutine neighbor_pass(self, grid, lstore, ioff, cnt, icnt, nself, &
             self%nlat(pos) = iat
             if (lnltr) self%nltr(pos) = 1
             if (use_wsc) then
-               itp = ioff(iat)
+               itp = tridx(iat)
                wsc%nimg_list(pos) = nself
                wsc%itr_list(pos) = int(itp)
                if (nself > 0) then
@@ -442,33 +427,33 @@ subroutine neighbor_pass(self, grid, lstore, ioff, cnt, icnt, nself, &
             end if
          end if
 
-         ! D. Traverse the stencil cells
-         do s = 1, ns
-            jc = jcl(s)
-            q0 = grid%start(jc)
-            q1 = grid%start(jc + 1) - 1
-            if (q1 < q0) cycle
+         ! D. Examine the neighboring linked cells
+         do shift = 1, ns
+            jc = jcl(shift)
+            checkatst = grid%start(jc)
+            checkatfin = grid%start(jc + 1) - 1
+            if (checkatfin < checkatst) cycle
 
             ! Check only required sorted atoms in the linked cell
             ! based on the upper triangular condition
             if (jmin > 1) then
-               q0 = lower_bound(grid%cellatidx, q0, q1, jmin)
-               if (q0 > q1) cycle
+               checkatst = lower_bound(grid%cellatidx, checkatst, checkatfin, jmin)
+               if (checkatst > checkatfin) cycle
             end if
 
             ! E. Interatomic distances examination
             ! Check the wsc translation images (if requested)
             if (use_wsc) then
-               do q = q0, q1
-                  vec(1) = xi - grid%x(q)
-                  vec(2) = yi - grid%y(q)
-                  vec(3) = zi - grid%z(q)
+               do checkat = checkatst, checkatfin
+                  vec(1) = xi - grid%x(checkat)
+                  vec(2) = yi - grid%y(checkat)
+                  vec(3) = zi - grid%z(checkat)
                   call get_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
                   if (nimg_count <= 0 .or. r2_min > cutoff2) cycle
                   nn = nn + 1
                   nmax = max(nmax, nimg_count)
                   if (lstore) then
-                     self%nlat(pos + nn) = grid%cellatidx(q)
+                     self%nlat(pos + nn) = grid%cellatidx(checkat)
                      wsc%nimg_list(pos + nn) = nimg_count
                      wsc%itr_list(pos + nn) = int(itp)
                      wsc%tridx_list(itp:itp + nimg_count - 1) = &
@@ -483,30 +468,30 @@ subroutine neighbor_pass(self, grid, lstore, ioff, cnt, icnt, nself, &
             end if
 
             ! Shift reference position per translation
-            if (itrl(s) > 0) then
-               t0 = itrl(s)
-               t1 = itrl(s)
+            if (itrl(shift) > 0) then
+               trst = itrl(shift)
+               trfin = itrl(shift)
             else
-               t0 = 1
-               t1 = ntr
+               trst = 1
+               trfin = ntr
             end if
 
             ! Examine interatomic distances for the current translation
-            ! Works only if the wsc is not used
-            do t = t0, t1
-               xit = xi - trans(1, t)
-               yit = yi - trans(2, t)
-               zit = zi - trans(3, t)
-               do q = q0, q1
-                  dx = xit - grid%x(q)
-                  dy = yit - grid%y(q)
-                  dz = zit - grid%z(q)
+            ! Performs only if the wsc is not used
+            do tr = trst, trfin
+               xit = xi - trans(1, tr)
+               yit = yi - trans(2, tr)
+               zit = zi - trans(3, tr)
+               do checkat = checkatst, checkatfin
+                  dx = xit - grid%x(checkat)
+                  dy = yit - grid%y(checkat)
+                  dz = zit - grid%z(checkat)
                   r2 = dx*dx + dy*dy + dz*dz
                   if (r2 > cutoff2 .or. r2 < epsilon(0.0_wp)) cycle
                   nn = nn + 1
                   if (lstore) then
-                     self%nlat(pos + nn) = grid%cellatidx(q)
-                     if (lnltr) self%nltr(pos + nn) = t
+                     self%nlat(pos + nn) = grid%cellatidx(checkat)
+                     if (lnltr) self%nltr(pos + nn) = tr
                   end if
                end do
             end do
@@ -514,9 +499,19 @@ subroutine neighbor_pass(self, grid, lstore, ioff, cnt, icnt, nself, &
 
          if (lstore) then
             ! Check that the number of neighbors matches the expected count
-            if (nn /= self%inl(iat + 1) - self%inl(iat) - 1_i8) isok = .false.
+            if (nn /= self%inl(iat + 1) - self%inl(iat) - 1_i8) then
+               call fatal_error(error, "[Fatal] counting and filling pass of "// &
+                  & "the neighbor list disagree")
+               exit
+            end if
          else
             cnt(iat) = nn
+            ! Check that the neighbor count is non-negative
+            if (cnt(iat) < 0) then
+               call fatal_error(error, "[Fatal] neighbor list of a single atom "// &
+                  & "exceeds the addressable range of the CSR index arrays")
+               exit
+            end if
             if (use_wsc) icnt(iat) = nimgs + nself
          end if
       end do
@@ -548,7 +543,8 @@ pure subroutine resolve_stencil(grid, ic, jcl, itrl, ns)
    !> Number of cells to scan
    integer, intent(out) :: ns
 
-   integer :: nx, ny, nz, nxy, ix, iy, iz, jx, jy, jz, sx, sy, sz, s, itr
+   integer :: nx, ny, nz, nxy, ix, iy, iz, jx, jy, jz
+   integer :: shiftx, shifty, shiftz, shift, itr
 
    nx = grid%n_xyz(1)
    ny = grid%n_xyz(2)
@@ -560,21 +556,21 @@ pure subroutine resolve_stencil(grid, ic, jcl, itrl, ns)
    ix = mod(ic - 1, nx) + 1
 
    ns = 0
-   do s = 1, size(grid%off, 2)
+   do shift = 1, size(grid%off, 2)
       itr = 0
       if (grid%periodic) then
-         call wrap_index(ix + grid%off(1, s), nx, jx, sx)
-         call wrap_index(iy + grid%off(2, s), ny, jy, sy)
-         call wrap_index(iz + grid%off(3, s), nz, jz, sz)
+         call get_translation_index(ix + grid%off(1, shift), nx, jx, shiftx)
+         call get_translation_index(iy + grid%off(2, shift), ny, jy, shifty)
+         call get_translation_index(iz + grid%off(3, shift), nz, jz, shiftz)
          if (grid%single) then
-            itr = grid%trmap(sx, sy, sz)
+            itr = grid%trmap(shiftx, shifty, shiftz)
             ! A shift without a matching translation cannot contribute
             if (itr == 0) cycle
          end if
       else
-         jx = ix + grid%off(1, s)
-         jy = iy + grid%off(2, s)
-         jz = iz + grid%off(3, s)
+         jx = ix + grid%off(1, shift)
+         jy = iy + grid%off(2, shift)
+         jz = iz + grid%off(3, shift)
          if (jx < 1 .or. jx > nx) cycle
          if (jy < 1 .or. jy > ny) cycle
          if (jz < 1 .or. jz > nz) cycle
@@ -587,41 +583,46 @@ pure subroutine resolve_stencil(grid, ic, jcl, itrl, ns)
 
 end subroutine resolve_stencil
 
-!> Wrap a cell index into the grid, reporting the lattice shift applied
-pure subroutine wrap_index(i, n, j, s)
+!> Apply PBC to a linked cell index along one lattice direction,
+!> returning the translated linked cell index and translation in {-1,0,1}
+pure subroutine get_translation_index(cellindx, ncells, trcellindx, trindx)
 
-   !> Unwrapped cell index
-   integer, intent(in) :: i
+   !> Non-periodic linked cell index
+   integer, intent(in) :: cellindx
 
    !> Number of cells along this direction
-   integer, intent(in) :: n
+   integer, intent(in) :: ncells
 
-   !> Wrapped cell index
-   integer, intent(out) :: j
+   !> Translated linked cell index
+   integer, intent(out) :: trcellindx
 
-   !> Lattice shift applied, one of -1, 0 and 1
-   integer, intent(out) :: s
+   !> Lattice translation applied, one of -1, 0 and 1
+   integer, intent(out) :: trindx
 
-   j = i
-   s = 0
-   if (j < 1) then
-      j = j + n
-      s = -1
-   else if (j > n) then
-      j = j - n
-      s = 1
+   trcellindx = cellindx
+   trindx = 0
+   if (trcellindx < 1) then
+      trcellindx = trcellindx + ncells
+      trindx = -1
+   else if (trcellindx > ncells) then
+      trcellindx = trcellindx - ncells
+      trindx = 1
    end if
 
-end subroutine wrap_index
+end subroutine get_translation_index
 
-!> First position in the ascending range grid%cellatidx(q0:q1) not below jmin
-pure function lower_bound(gat, q0, q1, jmin) result(lo)
+!> First position in the ascending range grid%cellatidx(checkatst:checkatfin)
+!> not below jmin
+pure function lower_bound(gat, checkatst, checkatfin, jmin) result(lo)
 
    !> Cell-ordered atom indices
    integer, intent(in) :: gat(:)
 
-   !> Bounds of the range to search
-   integer, intent(in) :: q0, q1
+   !> Start of the search
+   integer, intent(in) :: checkatst
+
+   !> End of the search
+   integer, intent(in) :: checkatfin
 
    !> Smallest acceptable atom index
    integer, intent(in) :: jmin
@@ -631,8 +632,8 @@ pure function lower_bound(gat, q0, q1, jmin) result(lo)
 
    integer :: hi, mid
 
-   lo = q0
-   hi = q1 + 1
+   lo = checkatst
+   hi = checkatfin + 1
    do while (lo < hi)
       mid = (lo + hi)/2
       if (gat(mid) < jmin) then
@@ -689,7 +690,7 @@ subroutine sort_atoms(mol, grid, lat_inv, min_xyz, cell_w, lshift)
             f = floor(fr(d))
             fw(d) = fr(d) - f
             ! Snap round-off at the upper cell face back to the lower one
-            if (fw(d) >= 1.0_wp - wrap_snap) then
+            if (fw(d) >= 1.0_wp - frac_tol) then
                fw(d) = 0.0_wp
                f = f + 1
             end if
@@ -704,6 +705,7 @@ subroutine sort_atoms(mol, grid, lat_inv, min_xyz, cell_w, lshift)
          !$omp atomic
          grid%start(ic + 1) = grid%start(ic + 1) + 1
       end do
+      !$omp end parallel do
    else
       ! Allocation is based on Cartesian coordinates
       !$omp parallel do schedule(static) default(none) &
@@ -718,6 +720,7 @@ subroutine sort_atoms(mol, grid, lat_inv, min_xyz, cell_w, lshift)
          !$omp atomic
          grid%start(ic + 1) = grid%start(ic + 1) + 1
       end do
+      !$omp end parallel do
    end if
 
    grid%start(1) = 1
@@ -746,10 +749,12 @@ subroutine sort_atoms(mol, grid, lat_inv, min_xyz, cell_w, lshift)
       grid%y(p) = mol%xyz(2, iat)
       grid%z(p) = mol%xyz(3, iat)
    end do
+   !$omp end parallel do
 
 end subroutine sort_atoms
 
-!> Build the list of stencil offsets scanned around every cell
+!> Build the offsets of the neighboring linked cells: the 27 adjacent cells, or
+!> all linked cells along periodic directions with fewer than 3 linked cells
 subroutine build_stencil(grid, lmulti)
 
    !> Cell-sorted linked cell grid
@@ -759,20 +764,19 @@ subroutine build_stencil(grid, lmulti)
    logical, intent(out) :: lmulti
 
    integer :: n(3), lo(3), hi(3)
-   integer :: d, di, dj, dk, nsten
+   integer :: dim, di, dj, dk, nsten
    integer, allocatable :: off(:, :)
 
-   n = grid%n_xyz
    lmulti = .false.
 
-   do d = 1, 3
-      if (grid%periodic .and. n(d) < 3) then
-         lo(d) = 0
-         hi(d) = n(d) - 1
+   do dim = 1, 3
+      if (grid%periodic .and. grid%n_xyz(dim) < 3) then
+         lo(dim) = 0
+         hi(dim) = grid%n_xyz(dim) - 1
          lmulti = .true.
       else
-         lo(d) = -1
-         hi(d) = 1
+         lo(dim) = -1
+         hi(dim) = 1
       end if
    end do
 
@@ -791,7 +795,7 @@ subroutine build_stencil(grid, lmulti)
 
 end subroutine build_stencil
 
-!> Map the integer lattice shift of a wrapped cell to its translation index
+!> Map the integer lattice shift of a cyclic cell to its translation index
 subroutine build_shift_map(grid, trans, lat_inv)
 
    !> Cell-sorted linked cell grid
@@ -818,7 +822,7 @@ subroutine build_shift_map(grid, trans, lat_inv)
 end subroutine build_shift_map
 
 !> Computes linked cell grid
-subroutine compute_grid(mol, cutoff, det, n_xyz, lat_inv, cell_w)
+subroutine compute_grid(mol, cutoff, grid, det, lat_inv, cell_w)
 
    !> Stucture type
    type(structure_type), intent(in) :: mol
@@ -826,11 +830,11 @@ subroutine compute_grid(mol, cutoff, det, n_xyz, lat_inv, cell_w)
    !> Interaction cutoff radius
    real(wp), intent(in) :: cutoff
 
+   !> Linked cell grid type
+   type(grid_type), intent(out) :: grid
+
    !> Determinant (Volume) of the lattice
    real(wp), intent(out) :: det
-
-   !> Output: Number of grid cells along each axis
-   integer, intent(out) :: n_xyz(3)
 
    !> Inverse of the lattice matrix, zero for a molecular system
    real(wp), intent(out), optional :: lat_inv(3, 3)
@@ -863,28 +867,30 @@ subroutine compute_grid(mol, cutoff, det, n_xyz, lat_inv, cell_w)
       cross_ij(:) = crossprod(lattice(:,1), lattice(:,2))
       H(3) = abs(det) / sqrt(sum(cross_ij**2))
 
-      ! Map cells dynamically to the strict real-space thickness
+      ! Number of cells: must be at least 1, and linked cell height >= cutoff
       do i = 1, 3
-         n_xyz(i) = max(1, floor(H(i) / (cutoff + tiny(1.0_wp))))
+         grid%n_xyz(i) = max(1, floor(H(i) / (cutoff + tiny(1.0_wp))))
       end do
 
-      if (present(cell_w)) cell_w = H / real(n_xyz, wp)
+      if (present(cell_w)) cell_w = H / real(grid%n_xyz, wp)
    else
       min_xyz = minval(mol%xyz, dim=2) - buffer
       max_xyz = maxval(mol%xyz, dim=2) + buffer
 
       ! Number of cells: must be at least 1, and cell width >= cutoff
-      n_xyz = max(1, floor((max_xyz - min_xyz) / (cutoff + tiny(1.0_wp))))
+      grid%n_xyz = max(1, floor((max_xyz - min_xyz) / (cutoff + tiny(1.0_wp))))
 
       if (present(cell_w)) then
-         cell_w = (max_xyz - min_xyz) / (real(n_xyz, wp) + tiny(1.0_wp)) &
+         cell_w = (max_xyz - min_xyz) / (real(grid%n_xyz, wp) + tiny(1.0_wp)) &
             & + tiny(1.0_wp)
       end if
       det = product(max_xyz - min_xyz)
    end if
 
-end subroutine compute_grid
+   grid%ncell = grid%n_xyz(1)*grid%n_xyz(2)*grid%n_xyz(3)
+   grid%periodic = any(mol%periodic)
 
+end subroutine compute_grid
 
 !> Build a linked cell list. Returns the chain-ordered lists 'head' and 'nxt'.
 subroutine get_linked_cell(mol, n_xyz, head, nxt, lat_inv, cell_w)
@@ -930,6 +936,7 @@ subroutine get_linked_cell(mol, n_xyz, head, nxt, lat_inv, cell_w)
          head(ic) = iat
          !$omp end atomic
       end do
+      !$omp end parallel do
    else if (present(cell_w)) then
       min_xyz = minval(mol%xyz, dim=2) - buffer
 
@@ -952,6 +959,7 @@ subroutine get_linked_cell(mol, n_xyz, head, nxt, lat_inv, cell_w)
          !$omp end atomic
 
       end do
+      !$omp end parallel do
    end if
 
 end subroutine get_linked_cell

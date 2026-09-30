@@ -21,7 +21,7 @@ module mctc_csrlist_linal
    implicit none
    private
 
-   public :: spmv_csr, spmm_csr
+   public :: spmv_csr, spmm_csr, spmspv_csr
 
    !> Performs the Compressed Sparse Row (CSR) matrix-vector operation
    !>
@@ -41,6 +41,21 @@ module mctc_csrlist_linal
       module procedure spmv_csr_211_standard
    end interface spmv_csr
 
+   !> Performs the sparse matrix - sparse vector operation
+   !>
+   !>    y := alpha*A*x
+   !>
+   !> where alpha is a scalar, A is a matrix given by a complete CSR list and
+   !> x is a sparse vector given as a pair of index/value arrays, holding the
+   !> positions and values of its non-zero elements. The resulting vector y is
+   !> returned in the same sparse representation, its index/value arrays are
+   !> allocated by the routine.
+   interface spmspv_csr
+      !> Sparse matrix - sparse vector multiplication, complete CSR storage.
+      module procedure spmspv_csr_111
+   end interface spmspv_csr
+
+
    !> Performs the Compressed Sparse Row (CSR) matrix-matrix operation
    !>
    !>    C := alpha*A*B + beta*C
@@ -58,9 +73,7 @@ module mctc_csrlist_linal
       module procedure spmm_csr_122
    end interface spmm_csr
 
-
 contains
-
 
 !> Multiply a CSR matrix by a vector with optional symmetry handling
 subroutine spmv_csr_111_standard(list, mlist, x, y, alpha, beta, symmetric, complete)
@@ -106,18 +119,17 @@ subroutine spmv_csr_111_standard(list, mlist, x, y, alpha, beta, symmetric, comp
 
    if (is_csr .or. (.not. is_sym)) then
       ! Full CSR or non-symmetric
+      if (beta == 0.0_wp) then
+         y(:) = 0.0_wp
+      else if (beta /= 1.0_wp) then
+         y(:) = beta * y
+      end if
+
       !$omp parallel do default(none) schedule(guided)&
       !$omp& private(i, k, j, y_tmp_i) &
-      !$omp& shared(list, mlist, x, y, alpha, beta, n)
+      !$omp& shared(list, mlist, x, y, alpha, n)
       do i = 1, n
-         if (beta == 0.0_wp) then
-            y_tmp_i = 0.0_wp
-         else if (beta == 1.0_wp) then
-            y_tmp_i = y(i)
-         else
-            y_tmp_i = y(i) * beta
-         end if
-
+         y_tmp_i = y(i)
          do k = list%inl(i), list%inl(i+1) - 1
             j = list%nlat(k)
             y_tmp_i = y_tmp_i + alpha * mlist(k) * x(j)
@@ -126,25 +138,17 @@ subroutine spmv_csr_111_standard(list, mlist, x, y, alpha, beta, symmetric, comp
       end do
       !$omp end parallel do
 
-      if (ny > n) then
-         !$omp parallel do default(none) &
-         !$omp& private(i) &
-         !$omp& shared(y, beta, n, ny) schedule(static)
-         do i = n + 1, ny
-            if (beta == 0.0_wp) then
-               y(i) = 0.0_wp
-            else if (beta /= 1.0_wp) then
-               y(i) = y(i) * beta
-            end if
-         end do
-         !$omp end parallel do
-      end if
-
    else
       ! Half-matrix symmetric CSR
+      if (beta == 0.0_wp) then
+         y(:) = 0.0_wp
+      else if (beta /= 1.0_wp) then
+         y(:) = beta * y
+      end if
+
       !$omp parallel default(none) &
       !$omp& private(y_priv, i, k, j, y_tmp_i) &
-      !$omp& shared(list, mlist, x, y, alpha, beta, n, ny)
+      !$omp& shared(list, mlist, x, y, alpha, n, ny)
       allocate(y_priv(ny))
       y_priv = 0.0_wp
 
@@ -164,16 +168,6 @@ subroutine spmv_csr_111_standard(list, mlist, x, y, alpha, beta, symmetric, comp
       end do
       !$omp end do
 
-      !$omp do schedule(static)
-      do i = 1, ny
-         if (beta == 0.0_wp) then
-            y(i) = 0.0_wp
-         else if (beta /= 1.0_wp) then
-            y(i) = y(i) * beta
-         end if
-      end do
-      !$omp end do
-
       !$omp critical
       do i = 1, ny
          y(i) = y(i) + y_priv(i)
@@ -185,7 +179,6 @@ subroutine spmv_csr_111_standard(list, mlist, x, y, alpha, beta, symmetric, comp
    end if
 
 end subroutine spmv_csr_111_standard
-
 
 !> Multiply a symmetric CSR matrix with separate diagonal elements by a vector
 subroutine spmv_csr_111(list, mlist, mdiag, x, y, alpha, beta, symmetric)
@@ -234,10 +227,16 @@ subroutine spmv_csr_111(list, mlist, mdiag, x, y, alpha, beta, symmetric)
       a = -alpha
    end if
 
+   if (beta == 0.0_wp) then
+      y(:) = 0.0_wp
+   else if (beta /= 1.0_wp) then
+      y(:) = beta * y
+   end if
+
    ! Single parallel region
    !$omp parallel default(none) &
    !$omp& private(y_priv, i, k, j, y_tmp_i) &
-   !$omp& shared(list, mlist, mdiag, x, y, a, beta, n, ny)
+   !$omp& shared(list, mlist, mdiag, x, y, a, n, ny)
    allocate(y_priv(ny))
    y_priv = 0.0_wp
 
@@ -253,17 +252,6 @@ subroutine spmv_csr_111(list, mlist, mdiag, x, y, alpha, beta, symmetric)
    end do
    !$omp end do
 
-   ! Scale vector y in parallel
-   !$omp do schedule(static)
-   do i = 1, ny
-      if (beta == 0.0_wp) then
-         y(i) = 0.0_wp
-      else if (beta /= 1.0_wp) then
-         y(i) = y(i) * beta
-      end if
-   end do
-   !$omp end do
-
    !$omp critical
    do i = 1, ny
       y(i) = y(i) + y_priv(i)
@@ -274,7 +262,6 @@ subroutine spmv_csr_111(list, mlist, mdiag, x, y, alpha, beta, symmetric)
    !$omp end parallel
 
 end subroutine spmv_csr_111
-
 
 !> Multiply a CSR-indexed full matrix by a vector with optional symmetry handling
 subroutine spmv_csr_211_standard(list, matr, x, y, alpha, beta, symmetric, complete)
@@ -319,19 +306,18 @@ subroutine spmv_csr_211_standard(list, matr, x, y, alpha, beta, symmetric, compl
 
    if (is_csr .or. (.not. is_sym)) then
       ! Full CSR or non-symmetric
+      if (beta == 0.0_wp) then
+         y(:) = 0.0_wp
+      else if (beta /= 1.0_wp) then
+         y(:) = beta * y
+      end if
+
       !$omp parallel do default(none) &
       !$omp& private(i, k, j, y_tmp_i) &
-      !$omp& shared(list, matr, x, y, alpha, beta, n) &
+      !$omp& shared(list, matr, x, y, alpha, n) &
       !$omp& schedule(dynamic)
       do i = 1, n
-         if (beta == 0.0_wp) then
-            y_tmp_i = 0.0_wp
-         else if (beta == 1.0_wp) then
-            y_tmp_i = y(i)
-         else
-            y_tmp_i = y(i) * beta
-         end if
-
+         y_tmp_i = y(i)
          do k = list%inl(i), list%inl(i+1) - 1
             j = list%nlat(k)
             y_tmp_i = y_tmp_i + alpha * matr(j, i) * x(j)
@@ -340,25 +326,17 @@ subroutine spmv_csr_211_standard(list, matr, x, y, alpha, beta, symmetric, compl
       end do
       !$omp end parallel do
 
-      if (ny > n) then
-         !$omp parallel do default(none) &
-         !$omp& private(i) &
-         !$omp& shared(y, beta, n, ny) schedule(static)
-         do i = n + 1, ny
-            if (beta == 0.0_wp) then
-               y(i) = 0.0_wp
-            else if (beta /= 1.0_wp) then
-               y(i) = y(i) * beta
-            end if
-         end do
-         !$omp end parallel do
-      end if
-
    else
       ! Half-matrix symmetric CSR
+      if (beta == 0.0_wp) then
+         y(:) = 0.0_wp
+      else if (beta /= 1.0_wp) then
+         y(:) = beta * y
+      end if
+
       !$omp parallel default(none) &
       !$omp& private(y_priv, i, k, j, y_tmp_i) &
-      !$omp& shared(list, matr, x, y, alpha, beta, n, ny)
+      !$omp& shared(list, matr, x, y, alpha, n, ny)
       allocate(y_priv(ny))
       y_priv = 0.0_wp
 
@@ -378,16 +356,6 @@ subroutine spmv_csr_211_standard(list, matr, x, y, alpha, beta, symmetric, compl
       end do
       !$omp end do
 
-      !$omp do schedule(static)
-      do i = 1, ny
-         if (beta == 0.0_wp) then
-            y(i) = 0.0_wp
-         else if (beta /= 1.0_wp) then
-            y(i) = y(i) * beta
-         end if
-      end do
-      !$omp end do
-
       ! Accumulate private thread contributions into y safely without ATOMIC
       !$omp critical
       do i = 1, ny
@@ -401,6 +369,87 @@ subroutine spmv_csr_211_standard(list, matr, x, y, alpha, beta, symmetric, compl
 
 end subroutine spmv_csr_211_standard
 
+!> Multiply a CSR matrix given in complete storage by a sparse vector,
+!> both the input and the resulting vector are held as index/value pairs
+subroutine spmspv_csr_111(list, mlist, xptr, xval, yptr, yval, alpha)
+
+   !> CSR neighbour-list structure
+   type(csr_list), intent(in) :: list
+
+   !> Matrix elements in CSR order
+   real(wp), intent(in) :: mlist(:)
+
+   !> Row indices of the non-zero elements of the input vector
+   integer, intent(in) :: xptr(:)
+
+   !> Values of the non-zero elements of the input vector
+   real(wp), intent(in) :: xval(:)
+
+   !> Row indices of the non-zero elements of the product vector, allocated here
+   integer, allocatable, intent(out) :: yptr(:)
+
+   !> Values of the non-zero elements of the product vector, allocated here
+   real(wp), allocatable, intent(out) :: yval(:)
+
+   !> Matrix scaling factor, defaults to one
+   real(wp), intent(in), optional :: alpha
+
+   integer :: i, j, n, m, nnz
+   integer(i8) :: k
+   real(wp) :: a, y_tmp_i
+   real(wp), allocatable :: xdense(:), ydense(:)
+   logical, allocatable :: yflag(:)
+
+   a = 1.0_wp
+   if (present(alpha)) a = alpha
+
+   n = size(list%inl) - 1
+
+   if (size(mlist) /= size(list%nlat) .or. n < 0) then
+      allocate(yptr(0), yval(0))
+      return
+   end if
+
+   ! Scatter the sparse input vector into a dense row-addressable buffer
+   allocate(xdense(n), source=0.0_wp)
+   m = min(size(xptr), size(xval))
+   do i = 1, m
+      j = xptr(i)
+      if (j >= 1 .and. j <= n) xdense(j) = xdense(j) + xval(i)
+   end do
+
+   allocate(ydense(n))
+   allocate(yflag(n), source=.false.)
+
+   !$omp parallel do default(none) schedule(guided) &
+   !$omp& private(i, k, j, y_tmp_i) &
+   !$omp& shared(list, mlist, xdense, ydense, yflag, a, n)
+   do i = 1, n
+      y_tmp_i = 0.0_wp
+      do k = list%inl(i), list%inl(i+1) - 1
+         j = list%nlat(k)
+         y_tmp_i = y_tmp_i + mlist(k) * xdense(j)
+      end do
+      ydense(i) = a * y_tmp_i
+      yflag(i) = y_tmp_i /= 0.0_wp
+   end do
+   !$omp end parallel do
+
+   ! Gather the non-zero rows of the dense product into the sparse output
+   nnz = count(yflag)
+   allocate(yptr(nnz))
+   allocate(yval(nnz))
+
+   nnz = 0
+   do i = 1, n
+      if (yflag(i)) then
+         nnz = nnz + 1
+         yptr(nnz) = i
+         yval(nnz) = ydense(i)
+      end if
+   end do
+
+end subroutine spmspv_csr_111
 
 !> Multiply two CSR matrices given in complete storage, the product is
 !> accumulated on the sparsity pattern of the output list.
@@ -432,7 +481,7 @@ subroutine spmm_csr_111(lista, alist, listb, blist, listc, clist, alpha, beta)
 
    integer :: i, j, jc, n, ncol, ntouch, it
    integer(i8) :: ka, kb, kc
-   real(wp) :: aij, c_tmp
+   real(wp) :: aij
 
    ! Thread-private sparse accumulator for a single row of the product
    real(wp), allocatable :: acc(:)
@@ -450,9 +499,15 @@ subroutine spmm_csr_111(lista, alist, listb, blist, listc, clist, alpha, beta)
    if (size(listb%nlat) > 0) ncol = max(ncol, maxval(listb%nlat))
    if (size(listc%nlat) > 0) ncol = max(ncol, maxval(listc%nlat))
 
+   if (beta == 0.0_wp) then
+      clist(:) = 0.0_wp
+   else if (beta /= 1.0_wp) then
+      clist(:) = beta * clist
+   end if
+
    !$omp parallel default(none) &
-   !$omp& private(i, j, jc, ka, kb, kc, aij, c_tmp, ntouch, it, acc, flag, touch) &
-   !$omp& shared(lista, alist, listb, blist, listc, clist, alpha, beta, n, ncol)
+   !$omp& private(i, j, jc, ka, kb, kc, aij, ntouch, it, acc, flag, touch) &
+   !$omp& shared(lista, alist, listb, blist, listc, clist, alpha, n, ncol)
    allocate(acc(ncol), source=0.0_wp)
    allocate(flag(ncol), source=.false.)
    allocate(touch(ncol), source=0)
@@ -479,15 +534,7 @@ subroutine spmm_csr_111(lista, alist, listb, blist, listc, clist, alpha, beta)
       ! Scatter the accumulator on the output pattern
       do kc = listc%inl(i), listc%inl(i+1) - 1
          jc = listc%nlat(kc)
-         if (beta == 0.0_wp) then
-            c_tmp = 0.0_wp
-         else if (beta == 1.0_wp) then
-            c_tmp = clist(kc)
-         else
-            c_tmp = clist(kc) * beta
-         end if
-         if (flag(jc)) c_tmp = c_tmp + alpha * acc(jc)
-         clist(kc) = c_tmp
+         if (flag(jc)) clist(kc) = clist(kc) + alpha * acc(jc)
       end do
 
       ! Reset the accumulator for the next row
@@ -501,7 +548,6 @@ subroutine spmm_csr_111(lista, alist, listb, blist, listc, clist, alpha, beta)
    !$omp end parallel
 
 end subroutine spmm_csr_111
-
 
 !> Multiply a CSR matrix given in complete storage by a dense matrix
 subroutine spmm_csr_122(list, mlist, bmat, cmat, alpha, beta)
@@ -536,21 +582,21 @@ subroutine spmm_csr_122(list, mlist, bmat, cmat, alpha, beta)
    if (size(bmat, 2) /= ncol) return
    if (nrow < n) return
 
+   ! Scale the full product block, including rows outside of the sparse matrix
+   if (beta == 0.0_wp) then
+      cmat(:, :) = 0.0_wp
+   else if (beta /= 1.0_wp) then
+      cmat(:, :) = beta * cmat
+   end if
+
    !$omp parallel default(none) &
    !$omp& private(i, j, k, c_tmp) &
-   !$omp& shared(list, mlist, bmat, cmat, alpha, beta, n, ncol)
+   !$omp& shared(list, mlist, bmat, cmat, alpha, n, ncol)
    allocate(c_tmp(ncol), source=0.0_wp)
 
    !$omp do schedule(runtime)
    do i = 1, n
-      if (beta == 0.0_wp) then
-         c_tmp(:) = 0.0_wp
-      else if (beta == 1.0_wp) then
-         c_tmp(:) = cmat(i, :)
-      else
-         c_tmp(:) = cmat(i, :) * beta
-      end if
-
+      c_tmp(:) = cmat(i, :)
       do k = list%inl(i), list%inl(i+1) - 1
          j = list%nlat(k)
          c_tmp(:) = c_tmp(:) + alpha * mlist(k) * bmat(j, :)
@@ -561,21 +607,6 @@ subroutine spmm_csr_122(list, mlist, bmat, cmat, alpha, beta)
 
    deallocate(c_tmp)
    !$omp end parallel
-
-   ! Rows outside of the sparse matrix are only scaled
-   if (nrow > n) then
-      !$omp parallel do default(none) &
-      !$omp& private(i) &
-      !$omp& shared(cmat, beta, n, nrow) schedule(static)
-      do i = n + 1, nrow
-         if (beta == 0.0_wp) then
-            cmat(i, :) = 0.0_wp
-         else if (beta /= 1.0_wp) then
-            cmat(i, :) = cmat(i, :) * beta
-         end if
-      end do
-      !$omp end parallel do
-   end if
 
 end subroutine spmm_csr_122
 

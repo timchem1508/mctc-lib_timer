@@ -15,8 +15,9 @@
 # Unit testing
 set(
   tests
-  "cutoff"
   "csrlist"
+  "csrlist-linal"
+  "cutoff"
   "data"
   "math"
   "ncoord"
