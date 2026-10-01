@@ -14,7 +14,7 @@
 
 !> Unit tests for compressed sparse row neighbor lists
 module test_csrlist_linal
-   use mctc_csrlist, only : csr_list, spmv_csr, spmm_csr, spmspv_csr
+   use mctc_csrlist, only : csr_list, spgemv_csr, spsymv_csr, spmm_csr, spmspv_csr
    use mctc_env, only : wp, i8, timer_type, format_time
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, &
       & test_failed, check
@@ -37,10 +37,10 @@ subroutine collect_csrlist_linal(testsuite)
    type(unittest_type), allocatable, intent(out) :: testsuite(:)
 
    testsuite = [ &
-      & new_unittest("spmv-mchrg", test_spmv_mcharge), &
-      & new_unittest("spmv-standard-csr", test_spmv_csr), &
-      & new_unittest("spmv-standard-csr-complete-list", test_spmv_csr_complete), &
-      & new_unittest("spmv-full-matrix", test_spmv_fullmat), &
+      & new_unittest("spgemv-mchrg", test_spgemv_mcharge), &
+      & new_unittest("spgemv-standard-csr", test_spgemv_csr), &
+      & new_unittest("spgemv-standard-csr-complete-list", test_spgemv_csr_complete), &
+      & new_unittest("spgemv-full-matrix", test_spgemv_fullmat), &
       & new_unittest("spmm-sparse-sparse", test_spmm_csr_sparse), &
       & new_unittest("spmm-sparse-dense", test_spmm_csr_dense), &
       & new_unittest("spmspv-sparse-vector", test_spmspv_csr) &
@@ -49,7 +49,7 @@ subroutine collect_csrlist_linal(testsuite)
 end subroutine collect_csrlist_linal
 
 
-subroutine test_spmv_mcharge(error)
+subroutine test_spgemv_mcharge(error)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -94,20 +94,19 @@ subroutine test_spmv_mcharge(error)
    allocate(list%nlat, source = cindx)
 
    allocate(y(size(vec)), source = 0.0_wp)
-   call spmv_csr(list, mlist, mdiag, vec, y, alpha=1.0_wp, beta=0.0_wp, &
-      & symmetric=.true.)
+   call spsymv_csr(5, mlist, mdiag, list%inl, list%nlat, vec, y)
 
    if (any(abs(y - vrhs) > thr)) then
-      call test_failed(error, "Multicharge version of the SpMV crashed.")
+      call test_failed(error, "Multicharge version of the spgemv crashed.")
       print"(20a)", "Expected product:"
       print"(5es21.14)", vrhs
       print"(20a)", "Diff:"
       print"(5es21.14)", y - vrhs
    end if
 
-end subroutine test_spmv_mcharge
+end subroutine test_spgemv_mcharge
 
-subroutine test_spmv_csr(error)
+subroutine test_spgemv_csr(error)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -148,19 +147,19 @@ subroutine test_spmv_csr(error)
    allocate(list%nlat, source = cindx)
 
    allocate(y(size(vec)), source = 0.0_wp)
-   call spmv_csr(list, mlist, vec, y, alpha=1.0_wp, beta=0.0_wp, symmetric=.true.)
+   call spsymv_csr(5, mlist, list%inl, list%nlat, vec, y)
 
    if (any(abs(y - vrhs) > thr)) then
-      call test_failed(error, "Standard CSR version of the SpMV crashed.")
+      call test_failed(error, "Standard CSR version of the spgemv crashed.")
       print"(20a)", "Expected product:"
       print"(5es21.14)", vrhs
       print"(20a)", "Diff:"
       print"(5es21.14)", y - vrhs
    end if
 
-end subroutine test_spmv_csr
+end subroutine test_spgemv_csr
 
-subroutine test_spmv_csr_complete(error)
+subroutine test_spgemv_csr_complete(error)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -209,20 +208,39 @@ subroutine test_spmv_csr_complete(error)
    allocate(list%nlat, source = cindx)
 
    allocate(y(size(vec)), source = 0.0_wp)
-   call spmv_csr(list, mlist, vec, y, alpha=1.0_wp, beta=0.0_wp, &
-      & symmetric=.false., complete=.true.)
+   call spgemv_csr(5, mlist, list%inl, list%nlat, vec, y)
 
    if (any(abs(y - vrhs) > thr)) then
-      call test_failed(error, "Full matrix version of the SpMV crashed.")
+      call test_failed(error, "Full matrix version of the spgemv crashed.")
       print"(20a)", "Expected product:"
       print"(5es21.14)", vrhs
       print"(20a)", "Diff:"
       print"(5es21.14)", y - vrhs
+      return
    end if
 
-end subroutine test_spmv_csr_complete
+   ! The matrix is symmetric, the transposed product must agree
+   call spgemv_csr(5, mlist, list%inl, list%nlat, vec, y, transa='T')
 
-subroutine test_spmv_fullmat(error)
+   if (any(abs(y - vrhs) > thr)) then
+      call test_failed(error, "Transposed version of the spgemv crashed.")
+      print"(20a)", "Diff:"
+      print"(5es21.14)", y - vrhs
+      return
+   end if
+
+   ! Symmetric products only reference one triangle of the complete list
+   call spsymv_csr(5, mlist, list%inl, list%nlat, vec, y, uplo='L')
+
+   if (any(abs(y - vrhs) > thr)) then
+      call test_failed(error, "Lower triangle version of the SymMV crashed.")
+      print"(20a)", "Diff:"
+      print"(5es21.14)", y - vrhs
+   end if
+
+end subroutine test_spgemv_csr_complete
+
+subroutine test_spgemv_fullmat(error)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -271,17 +289,17 @@ subroutine test_spmv_fullmat(error)
    allocate(list%nlat, source = cindx)
 
    allocate(y(size(vec)), source = 0.0_wp)
-   call spmv_csr(list, matrix, vec, y, alpha=1.0_wp, beta=0.0_wp)
+   call spgemv_csr(5, matrix, list%inl, list%nlat, vec, y)
 
    if (any(abs(y - vrhs) > thr)) then
-      call test_failed(error, "Full matrix version of the SpMV crashed.")
+      call test_failed(error, "Full matrix version of the spgemv crashed.")
       print"(20a)", "Expected product:"
       print"(5es21.14)", vrhs
       print"(20a)", "Diff:"
       print"(5es21.14)", y - vrhs
    end if
 
-end subroutine test_spmv_fullmat
+end subroutine test_spgemv_fullmat
 
 !> Expand a complete CSR matrix into its dense representation
 subroutine csr_to_dense(inl, nlat, mlist, dense)
@@ -322,16 +340,13 @@ subroutine test_spmm_csr_sparse(error)
    integer, parameter :: nlata(10) = [1, 2, 2, 1, 3, 3, 2, 4, 4, 3]
    integer(i8), parameter :: inlb(5) = [1, 3, 4, 7, 9]
    integer, parameter :: nlatb(8) = [1, 3, 2, 3, 1, 4, 4, 2]
-   real(wp), parameter :: alpha = 0.5_wp, beta = 2.0_wp
 
-   type(csr_list) :: lista, listb, listc
-
-   integer :: i, j, kk
+   integer :: i, info
    integer(i8) :: inlc(n+1)
-   integer :: nlatc(n*n)
+   integer, allocatable :: nlatc(:)
    real(wp) :: alist(size(nlata)), blist(size(nlatb))
-   real(wp) :: clist(n*n), cref(n*n)
-   real(wp) :: adns(n, n), bdns(n, n), pdns(n, n)
+   real(wp), allocatable :: clist(:)
+   real(wp) :: adns(n, n), bdns(n, n), cdns(n, n)
 
    do i = 1, size(alist)
       alist(i) = 0.5_wp*real(i, wp) - 1.25_wp
@@ -340,47 +355,50 @@ subroutine test_spmm_csr_sparse(error)
       blist(i) = 1.0_wp/real(i + 1, wp)
    end do
 
-   ! Complete output pattern, no contribution of the product is discarded
-   kk = 0
-   do i = 1, n
-      inlc(i) = int(kk + 1, i8)
-      do j = 1, n
-         kk = kk + 1
-         nlatc(kk) = j
-         clist(kk) = 0.1_wp*real(kk, wp)
-      end do
-   end do
-   inlc(n+1) = int(kk + 1, i8)
-
    call csr_to_dense(inla, nlata, alist, adns)
    call csr_to_dense(inlb, nlatb, blist, bdns)
-   pdns = matmul(adns, bdns)
 
-   kk = 0
-   do i = 1, n
-      do j = 1, n
-         kk = kk + 1
-         cref(kk) = beta*clist(kk) + alpha*pdns(i, j)
-      end do
-   end do
+   ! Two-stage product, first the row offsets, then the elements of C
+   allocate(nlatc(0), clist(0))
+   call spmm_csr('N', 1, 0, n, n, n, alist, nlata, inla, blist, nlatb, inlb, &
+      & clist, nlatc, inlc, 0_i8, info)
+   deallocate(nlatc, clist)
+   allocate(nlatc(inlc(n+1) - 1), clist(inlc(n+1) - 1))
+   call spmm_csr('N', 2, 0, n, n, n, alist, nlata, inla, blist, nlatb, inlb, &
+      & clist, nlatc, inlc, 0_i8, info)
 
-   allocate(lista%inl, source=inla)
-   allocate(lista%nlat, source=nlata)
-   allocate(listb%inl, source=inlb)
-   allocate(listb%nlat, source=nlatb)
-   allocate(listc%inl, source=inlc)
-   allocate(listc%nlat, source=nlatc)
+   call check(error, info, 0)
+   if (allocated(error)) return
 
-   call spmm_csr(lista, alist, listb, blist, listc, clist, &
-      & alpha=alpha, beta=beta)
-
-   if (any(abs(clist - cref) > thr)) then
+   call csr_to_dense(inlc, nlatc, clist, cdns)
+   if (any(abs(cdns - matmul(adns, bdns)) > thr)) then
       call test_failed(error, "Sparse-sparse SpMM does not match the dense product.")
-      print"(20a)", "Expected product:"
-      print"(4es21.14)", cref
       print"(20a)", "Diff:"
-      print"(4es21.14)", clist - cref
+      print"(4es21.14)", cdns - matmul(adns, bdns)
+      return
    end if
+
+   ! Single-stage transposed product within the maximal number of elements
+   deallocate(nlatc, clist)
+   allocate(nlatc(n*n), clist(n*n))
+   call spmm_csr('T', 0, 0, n, n, n, alist, nlata, inla, blist, nlatb, inlb, &
+      & clist, nlatc, inlc, int(n*n, i8), info)
+
+   call check(error, info, 0)
+   if (allocated(error)) return
+
+   call csr_to_dense(inlc, nlatc, clist, cdns)
+   if (any(abs(cdns - matmul(transpose(adns), bdns)) > thr)) then
+      call test_failed(error, "Transposed sparse-sparse SpMM does not match the dense product.")
+      print"(20a)", "Diff:"
+      print"(4es21.14)", cdns - matmul(transpose(adns), bdns)
+      return
+   end if
+
+   ! Insufficient space is reported by the row exceeding nzmax
+   call spmm_csr('N', 0, 0, n, n, n, alist, nlata, inla, blist, nlatb, inlb, &
+      & clist, nlatc, inlc, 1_i8, info)
+   call check(error, info, 1)
 
 end subroutine test_spmm_csr_sparse
 
@@ -394,8 +412,6 @@ subroutine test_spmm_csr_dense(error)
    integer(i8), parameter :: inla(5) = [1, 3, 6, 9, 11]
    integer, parameter :: nlata(10) = [1, 2, 2, 1, 3, 3, 2, 4, 4, 3]
    real(wp), parameter :: alpha = -0.75_wp, beta = 3.0_wp
-
-   type(csr_list) :: lista
 
    integer :: i, j
    real(wp) :: alist(size(nlata))
@@ -415,13 +431,11 @@ subroutine test_spmm_csr_dense(error)
    end do
 
    call csr_to_dense(inla, nlata, alist, adns)
-   cref(:, :) = beta*cmat(:, :)
-   cref(:n, :) = cref(:n, :) + alpha*matmul(adns, bmat)
+   cref(:, :) = cmat(:, :)
+   cref(:n, :) = beta*cmat(:n, :) + alpha*matmul(adns, bmat)
 
-   allocate(lista%inl, source=inla)
-   allocate(lista%nlat, source=nlata)
-
-   call spmm_csr(lista, alist, bmat, cmat, alpha=alpha, beta=beta)
+   call spmm_csr('N', n, m, n, alpha, 'G', alist, nlata, inla(:n), inla(2:), &
+      & bmat, n, beta, cmat, nrow)
 
    if (any(abs(cmat - cref) > thr)) then
       call test_failed(error, "Sparse-dense SpMM does not match the dense product.")

@@ -168,9 +168,15 @@ contains
       !> CSR list for neighbourlist-based CN evaluation
       type(csr_list), intent(in), optional :: list
 
-      !> Derivatives of the CN with respect to Cartesian coordinates (list-based)
-      real(wp), intent(out), optional :: dcndrij(:, :), dcndrji(:, :), &
-         & dcndrdiag(:, :)
+      !> Derivative of the CN with respect to the Cartesian coordinates.
+      !> Off-diagonal upper-triangle elements
+      real(wp), intent(out), optional :: dcndrij(:, :)
+
+      !> Off-diagonal lower-triangle elements
+      real(wp), intent(out), optional :: dcndrji(:, :)
+
+      !> Diagonal elements
+      real(wp), intent(out), optional :: dcndrdiag(:, :)
 
       if (present(list)) then
          if (present(dcndrij) .and. present(dcndrji) &

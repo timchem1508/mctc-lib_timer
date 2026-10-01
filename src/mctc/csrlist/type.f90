@@ -46,6 +46,26 @@
 !>  2. `build_stencil` fixes which cells are scanned around each cell,
 !>  3. `neighbor_pass` walks the grid twice, once to size the CSR arrays and
 !>     once to fill them.
+!>
+!> References:
+!>
+!> Verlet neighbor list:
+!>
+!> L. Verlet,
+!> *Phys. Rev.*, **1967**, 159, 98.
+!> DOI: [10.1103/PhysRev.159.98](https://doi.org/10.1103/PhysRev.159.98)
+!>
+!> Linked-cell algorithm:
+!>
+!> R. W. Hockney, S. P. Goel, and J. W. Eastwood,
+!> *J. Comput. Phys.*, **1974**, 14, 148.
+!> DOI: [10.1016/0021-9991(74)90010-2](https://doi.org/10.1016/0021-9991(74)90010-2)
+!>
+!> Hybrid approach combining Verlet and linked-cell algorithms:
+!>
+!> D. Yao, J. Wang, and Q. Cheng,
+!> *Comput. Phys. Commun.*, **2004**, 161, 27.
+!> DOI: [10.1016/j.cpc.2004.04.004](https://doi.org/10.1016/j.cpc.2004.04.004)
 
 module mctc_csrlist_type
    use mctc_cutoff, only : get_lattice_points
@@ -58,7 +78,7 @@ module mctc_csrlist_type
 
    public :: csr_list, new_csr_list, compute_grid, get_linked_cell, grid_type
 
-   !> neighborlist in CSR format
+   !> Neighborlist in CSR format
    type :: csr_list
 
       !> Realspace cutoff for neighborlist generation
@@ -81,9 +101,6 @@ module mctc_csrlist_type
 
       !> Lattice translation vector
       real(wp), allocatable :: trans(:, :)
-
-      !> Wigner-Seitz cell type
-      type(wignerseitz_cell), allocatable :: wsc
    end type csr_list
 
 

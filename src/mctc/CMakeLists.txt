@@ -23,8 +23,8 @@ set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
 
 list(
   APPEND srcs
-  "${dir}/cutoff.f90"
   "${dir}/csrlist.f90"
+  "${dir}/cutoff.f90"
   "${dir}/data.f90"
   "${dir}/env.f90"
   "${dir}/io.f90"

@@ -215,8 +215,10 @@ end function smooth_image_weight_derivative
 subroutine get_wignerseitz_weights(self, jat, iat, rij, weight, dwdr, dwdL)
    !> Wigner-Seitz cell instance
    type(wignerseitz_cell), intent(in) :: self
-   !> Pair indices in the Wigner-Seitz image arrays
-   integer, intent(in) :: jat, iat
+   !> Index of reference atom in the Wigner-Seitz image arrays
+   integer, intent(in) :: iat
+   !> Index of examined atom in the Wigner-Seitz image arrays
+   integer, intent(in) :: jat
    !> Cartesian pair vector
    real(wp), intent(in) :: rij(3)
    !> Normalized image weights
