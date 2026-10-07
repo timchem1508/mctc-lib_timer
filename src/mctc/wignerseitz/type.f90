@@ -153,38 +153,41 @@ subroutine get_pairs_csr(trans, rij, iws, list, min_r2)
    real(wp), intent(in) :: rij(3)
    !> Number of images for a pair
    integer, intent(out) :: iws
-   !> List of image indices for a pair
+   !> Indices into trans of the images of a pair, nearest image first
    integer, intent(out) :: list(:)
    !> Minimum squared distance found
    real(wp), intent(out) :: min_r2
 
-   real(wp) :: dx, dy, dz, r2
-   integer :: itr, ntr, img
+   real(wp) :: dx, dy, dz, dist(size(trans, 2))
+   integer :: itr, imin
 
-   ntr = size(trans, 2)
    iws = 0
-   img = 0
+   imin = 0
    min_r2 = huge(1.0_wp)
 
-   do itr = 1, ntr
+   ! Squared distances of all images and the nearest image
+   do itr = 1, size(trans, 2)
       dx = rij(1) - trans(1, itr)
       dy = rij(2) - trans(2, itr)
       dz = rij(3) - trans(3, itr)
-      r2 = dx*dx + dy*dy + dz*dz
-
-      if (r2 < thr) cycle
-      img = img + 1
-
-      if (r2 < min_r2 - tol) then
-         ! Found a strictly better minimum
-         min_r2 = r2
-         iws = 1
-         list(1) = img
-      else if (r2 < min_r2 + tol) then
-         ! Within tolerance: record degeneracy
-         iws = iws + 1
-         list(iws) = img
+      dist(itr) = dx*dx + dy*dy + dz*dz
+      if (dist(itr) < thr) cycle
+      if (dist(itr) < min_r2) then
+         min_r2 = dist(itr)
+         imin = itr
       end if
+   end do
+
+   if (imin == 0) return
+
+   ! Nearest image first, followed by all images within the tolerance
+   iws = 1
+   list(iws) = imin
+   do itr = 1, size(trans, 2)
+      if (itr == imin .or. dist(itr) < thr) cycle
+      if (dist(itr) - min_r2 > tol) cycle
+      iws = iws + 1
+      list(iws) = itr
    end do
 
 end subroutine get_pairs_csr

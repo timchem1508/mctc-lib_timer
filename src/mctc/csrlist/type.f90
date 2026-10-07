@@ -459,6 +459,8 @@ subroutine neighbor_pass(self, grid, lstore, tridx, cnt, icnt, nself, &
             ! Check the wsc translation images (if requested)
             if (use_wsc) then
                do checkat = checkatst, checkatfin
+                  ! Self-images are held by the diagonal entry
+                  if (grid%cellatidx(checkat) == iat) cycle
                   vec(1) = xi - grid%x(checkat)
                   vec(2) = yi - grid%y(checkat)
                   vec(3) = zi - grid%z(checkat)

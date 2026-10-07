@@ -72,7 +72,11 @@ subroutine collect_csrlist(testsuite)
       & new_unittest("csr-vs-verlet-x04-complete", test_list_x04_complete), &
       & new_unittest("csr-vs-verlet-x05-complete", test_list_x05_complete), &
       & new_unittest("nacl-wsc", test_nacl_wsc), &
-      & new_unittest("feo2-wsc", test_feo2_wsc) &
+      & new_unittest("feo2-wsc", test_feo2_wsc), &
+      & new_unittest("nacl-wsc-images", test_nacl_wsc_images), &
+      & new_unittest("nacl-wsc-images-complete", test_nacl_wsc_images_complete), &
+      & new_unittest("feo2-wsc-images", test_feo2_wsc_images), &
+      & new_unittest("feo2-wsc-images-complete", test_feo2_wsc_images_complete) &
       & ]
 
 end subroutine collect_csrlist
@@ -454,6 +458,62 @@ subroutine test_wsc(error, mol, cutoff, cmp, ref_list, ref_nimg)
    end do
 
 end subroutine test_wsc
+
+!> Compare the Wigner-Seitz images of the neighbor list with the dense
+!> Wigner-Seitz cell
+subroutine test_wsc_images(error, mol, cutoff, cmp)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
+
+   !> Cutoff radius
+   real(wp), intent(in) :: cutoff
+
+   !> Whether a complete or a symmetrical reduced map should be generated
+   logical, intent(in) :: cmp
+
+   type(csr_list), allocatable :: list
+   type(wignerseitz_cell) :: wsc, ref
+   integer :: iat, jat, img, nimg
+   integer(i8) :: kat, ist
+
+   allocate(list)
+   call new_csr_list(list, mol, error, wsc, cutoff=cutoff, complete=cmp)
+   if (allocated(error)) return
+   call new_wignerseitz_cell(ref, mol)
+
+   do iat = 1, mol%nat
+      do kat = list%inl(iat), list%inl(iat + 1) - 1
+         jat = list%nlat(kat)
+         ! The self-images are only held by the diagonal entry
+         if (kat > list%inl(iat) .and. jat == iat) then
+            call test_failed(error, "Atom is listed as its own off-diagonal neighbor")
+            return
+         end if
+
+         ! The dense cell holds the images of r(iat) - r(jat) in column (jat, iat)
+         nimg = wsc%nimg_list(kat)
+         call check(error, nimg, ref%nimg(jat, iat))
+         if (allocated(error)) return
+
+         ist = wsc%itr_list(kat)
+         call check(error, wsc%tridx_list(ist), ref%tridx(1, jat, iat))
+         if (allocated(error)) return
+         do img = 1, nimg
+            if (count(ref%tridx(:nimg, jat, iat) == wsc%tridx_list(ist + img - 1)) &
+               & /= 1) then
+               call test_failed(error, &
+                  & "Wigner-Seitz images do not match the dense Wigner-Seitz cell")
+               return
+            end if
+         end do
+      end do
+   end do
+
+end subroutine test_wsc_images
 
 subroutine test_grid_methane(error)
 
@@ -1010,5 +1070,49 @@ subroutine test_feo2_wsc(error)
    call test_wsc(error, mol, cutoff, .false., ref_list, ref_nimg)
 
 end subroutine test_feo2_wsc
+
+subroutine test_nacl_wsc_images(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_structure(mol, "nacl")
+   call test_wsc_images(error, mol, 29.0_wp, .false.)
+
+end subroutine test_nacl_wsc_images
+
+subroutine test_nacl_wsc_images_complete(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_structure(mol, "nacl")
+   call test_wsc_images(error, mol, 29.0_wp, .true.)
+
+end subroutine test_nacl_wsc_images_complete
+
+subroutine test_feo2_wsc_images(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_structure(mol, "feo2")
+   call test_wsc_images(error, mol, 29.0_wp, .false.)
+
+end subroutine test_feo2_wsc_images
+
+subroutine test_feo2_wsc_images_complete(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_structure(mol, "feo2")
+   call test_wsc_images(error, mol, 29.0_wp, .true.)
+
+end subroutine test_feo2_wsc_images_complete
 
 end module test_csrlist

@@ -302,7 +302,8 @@ contains
                countf = den * self%ncoord_count(izp, jzp, r1)
 
                cn_local(iat) = cn_local(iat) + countf
-               if (iat /= jat) then
+               ! A complete list also holds the pair in the row of jat
+               if (iat /= jat .and. .not. list%complete) then
                   cn_local(jat) = cn_local(jat) + countf * self%directed_factor
                end if
 
@@ -402,7 +403,8 @@ contains
 
    end subroutine ncoord_d
 
-   !> Evaluates coordination numbers and derivatives using an upper-triangle CSR neighbour list
+   !> Evaluates coordination numbers and derivatives using a CSR neighbour list,
+   !> either upper-triangle or complete
    subroutine ncoord_d_list(self, mol, trans, cn, dcndrij, dcndrji, dcndrdiag, &
       & dcndL, list)
       !> Coordination number container
@@ -470,9 +472,6 @@ contains
                countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
 
                cn_local(iat) = cn_local(iat) + countf
-               if (iat /= jat) then
-                  cn_local(jat) = cn_local(jat) + countf * self%directed_factor
-               end if
 
                ! store off-diagonal box (iat,jat)
                dcndrlistij_local(:, kat) = dcndrlistij_local(:, kat) &
@@ -481,12 +480,19 @@ contains
 
                ! accumulate diagonals
                dcndrdiag_local(:,iat) = dcndrdiag_local(:,iat) + countd
-               dcndrdiag_local(:, jat) = dcndrdiag_local(:, jat) &
-                  & - countd * self%directed_factor
 
                sigma = spread(countd, 1, 3) * spread(rij, 2, 3)
 
                dcndL_local(:, :, iat) = dcndL_local(:, :, iat) + sigma
+
+               ! A complete list also holds the pair in the row of jat
+               if (list%complete) cycle
+
+               if (iat /= jat) then
+                  cn_local(jat) = cn_local(jat) + countf * self%directed_factor
+               end if
+               dcndrdiag_local(:, jat) = dcndrdiag_local(:, jat) &
+                  & - countd * self%directed_factor
                if (iat /= jat) then
                   dcndL_local(:, :, jat) = dcndL_local(:, :, jat) &
                   & + sigma * self%directed_factor
@@ -630,7 +636,7 @@ contains
       integer(i8) :: kat
 
       real(wp) :: r2, r1, rij(3), countd(3), ds(3, 3), cutoff2, den
-      real(wp) :: idamp, jdamp, dEdcnij
+      real(wp) :: idamp, jdamp, dEdcnj, dEdcnij
       real(wp), allocatable :: cn(:)
 
       ! Thread-private arrays for reduction
@@ -648,7 +654,7 @@ contains
       !$omp parallel default(none) &
       !$omp shared(self, mol, list, trans, cutoff2, dEdcn, gradient, sigma, cn) &
       !$omp private(iat, jat, kat, itr, izp, jzp, r2, rij, r1, countd, ds, den) &
-      !$omp private(gradient_local, sigma_local, idamp, jdamp, dEdcnij)
+      !$omp private(gradient_local, sigma_local, idamp, jdamp, dEdcnj, dEdcnij)
       allocate(gradient_local(size(gradient, 1), size(gradient, 2)), source=0.0_wp)
       allocate(sigma_local(size(sigma, 1), size(sigma, 2)), source=0.0_wp)
       !$omp do schedule(runtime)
@@ -668,9 +674,15 @@ contains
             jdamp = 1.0_wp
             if (self%cut > 0.0_wp) jdamp = dlog_cn_cut(cn(jat), self%cut)
 
+            ! Chain-rule factor of the CN of j, a complete list also holds the
+            ! pair in the row of jat, which accounts for it
+            dEdcnj = 0.0_wp
+            if (.not. list%complete) then
+               dEdcnj = dEdcn(jat) * self%directed_factor * jdamp
+            end if
+
             ! Combined chain-rule factor for the pair contribution
-            dEdcnij = dEdcn(iat) * idamp &
-               & + dEdcn(jat) * self%directed_factor * jdamp
+            dEdcnij = dEdcn(iat) * idamp + dEdcnj
 
             do itr = 1, size(trans, dim=2)
                rij = mol%xyz(:, iat) - (mol%xyz(:, jat) + trans(:, itr))
@@ -687,8 +699,7 @@ contains
 
 
                sigma_local(:, :) = sigma_local(:, :) &
-                  & + ds * (dEdcn(iat) * idamp + &
-                  & merge(dEdcn(jat) * self%directed_factor * jdamp, 0.0_wp, jat /= iat))
+                  & + ds * (dEdcn(iat) * idamp + merge(dEdcnj, 0.0_wp, jat /= iat))
             end do
          end do
       end do
@@ -880,6 +891,8 @@ contains
 
          do kat = list%inl(iat), list%inl(iat + 1) - 1
             jat = list%nlat(kat)
+            ! Self-images do not depend on the atomic positions
+            if (jat == iat) cycle
             jzp = mol%id(jat)
             den = self%get_en_factor(izp, jzp)
 
@@ -912,6 +925,20 @@ contains
             end do
 
             diagonal_local(:, :, iat) = diagonal_local(:, :, iat) + pair_box(:, :)
+
+            ! A complete list also holds the pair in the row of jat, which adds
+            ! the same box for jat, only the rows of iat are written here
+            if (list%complete) then
+               do jc = 1, 3
+                  jj = 3*(jat - 1) + jc
+                  do ic = 1, 3
+                     ii = 3*(iat - 1) + ic
+                     hessian(ii, jj) = hessian(ii, jj) - pair_box(ic, jc)
+                  end do
+               end do
+               cycle
+            end if
+
             diagonal_local(:, :, jat) = diagonal_local(:, :, jat) + pair_box(:, :)
 
             do ic = 1, 3

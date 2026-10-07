@@ -13,6 +13,7 @@
 ! limitations under the License.
 
 module test_ncoord
+   use mctc_csrlist, only : csr_list, new_csr_list
    use mctc_cutoff, only : get_lattice_points
    use mctc_data_covrad, only : get_covalent_rad
    use mctc_data_paulingen, only : get_pauling_en
@@ -27,6 +28,7 @@ module test_ncoord
    use mctc_ncoord_erf_en, only : erf_en_ncoord_type, new_erf_en_ncoord
    use mctc_ncoord_exp, only : exp_ncoord_type, new_exp_ncoord
    use mctc_ncoord_type, only : ncoord_type
+   use mctc_wignerseitz, only : wignerseitz_cell
    use testsuite_structure, only : get_structure
    implicit none
    private
@@ -34,6 +36,7 @@ module test_ncoord
    public :: collect_ncoord
 
    real(wp), parameter :: thr = 100*epsilon(1.0_wp)
+   real(wp), parameter :: thr1 = 1.0e5_wp*epsilon(1.0_wp)
    real(wp), parameter :: thr2 = sqrt(epsilon(1.0_wp))
 
 contains
@@ -108,6 +111,9 @@ contains
       & new_unittest("dcndL-mb06_erf_dftd4", test_dcndL_mb06_erf_dftd4), &
       & new_unittest("dcndL-mb07_erf_dftd4", test_dcndL_mb07_erf_dftd4), &
       & new_unittest("dcndL-antracene_erf_dftd4", test_dcndL_anthracene_erf_dftd4), &
+      & new_unittest("cn-list-mb01_erf_en", test_cn_list_mb01_erf_en), &
+      & new_unittest("cn-list-nacl_erf", test_cn_list_nacl_erf), &
+      & new_unittest("cn-list-feo2_erf_en", test_cn_list_feo2_erf_en), &
       & new_unittest("cn_unknown", test_cn_unknown, should_fail=.true.), &
       & new_unittest("cn_count_string_to_id", test_cn_count_string_to_id), &
       & new_unittest("cn_count_id_to_string", test_cn_count_id_to_string) &
@@ -256,6 +262,136 @@ contains
       end if
 
    end subroutine test_numhessian
+
+
+   !> Compare the coordination numbers and their gradient and Hessian
+   !> contractions evaluated with half and complete neighbour lists against
+   !> the dense evaluation
+   subroutine test_cn_list(error, mol, ncoord)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      !> Molecular structure data
+      type(structure_type), intent(in) :: mol
+
+      !> Coordination number type
+      class(ncoord_type), intent(in) :: ncoord
+
+      integer :: iat, icmp
+      logical :: complete
+      real(wp) :: sigma(3, 3), sigmal(3, 3)
+      real(wp), allocatable :: dEdcn(:), lattr(:, :)
+      real(wp), allocatable :: cn(:), gradient(:, :), hessian(:, :)
+      real(wp), allocatable :: cnl(:), gradientl(:, :), hessianl(:, :)
+      type(csr_list), allocatable :: list
+      type(wignerseitz_cell), allocatable :: wsc
+
+      allocate(dEdcn(mol%nat), cn(mol%nat), cnl(mol%nat), &
+         & gradient(3, mol%nat), gradientl(3, mol%nat), &
+         & hessian(3*mol%nat, 3*mol%nat), hessianl(3*mol%nat, 3*mol%nat))
+
+      do iat = 1, mol%nat
+         dEdcn(iat) = 0.125_wp*real(iat, wp) - 0.375_wp
+      end do
+
+      call get_lattice_points(mol%periodic, mol%lattice, ncoord%cutoff, lattr)
+
+      call ncoord%get_coordination_number(mol, lattr, cn)
+      gradient(:, :) = 0.0_wp
+      sigma(:, :) = 0.0_wp
+      call ncoord%add_coordination_number_derivs(mol, lattr, dEdcn, gradient, sigma)
+      hessian(:, :) = 0.0_wp
+      call ncoord%add_coordination_number_hessian(mol, lattr, dEdcn, hessian)
+
+      do icmp = 1, 2
+         complete = icmp == 2
+         allocate(list)
+         if (any(mol%periodic)) then
+            ! Periodic lists hold each neighbour once with its Wigner-Seitz images
+            allocate(wsc)
+            call new_csr_list(list, mol, error, wsc, cutoff=ncoord%cutoff, &
+               & complete=complete)
+            deallocate(wsc)
+         else
+            call new_csr_list(list, mol, error, cutoff=ncoord%cutoff, &
+               & complete=complete)
+         end if
+         if (allocated(error)) return
+
+         call ncoord%get_coordination_number(mol, lattr, cnl, list=list)
+         gradientl(:, :) = 0.0_wp
+         sigmal(:, :) = 0.0_wp
+         call ncoord%add_coordination_number_derivs_list(mol, lattr, dEdcn, &
+            & gradientl, sigmal, list)
+         hessianl(:, :) = 0.0_wp
+         call ncoord%add_coordination_number_hessian_list(mol, lattr, dEdcn, &
+            & hessianl, list)
+         deallocate(list)
+
+         if (maxval(abs(cnl - cn)) > thr1) then
+            call test_failed(error, "Coordination numbers do not match")
+            print "(a,l2,es21.14)", "complete, max deviation:", complete, &
+               & maxval(abs(cnl - cn))
+            return
+         end if
+
+         if (maxval(abs(gradientl - gradient)) > thr1) then
+            call test_failed(error, "Coordination number gradient does not match")
+            print "(a,l2,es21.14)", "complete, max deviation:", complete, &
+               & maxval(abs(gradientl - gradient))
+            return
+         end if
+
+         if (maxval(abs(sigmal - sigma)) > thr1) then
+            call test_failed(error, "Coordination number strain derivative does not match")
+            print "(a,l2,es21.14)", "complete, max deviation:", complete, &
+               & maxval(abs(sigmal - sigma))
+            return
+         end if
+
+         if (maxval(abs(hessianl - hessian)) > thr1) then
+            call test_failed(error, "Coordination number Hessian does not match")
+            print "(a,l2,es21.14)", "complete, max deviation:", complete, &
+               & maxval(abs(hessianl - hessian))
+            return
+         end if
+      end do
+
+   end subroutine test_cn_list
+
+
+   subroutine test_cn_list_mb01_erf_en(error)
+      type(error_type), allocatable, intent(out) :: error
+      type(structure_type) :: mol
+      type(erf_en_ncoord_type) :: ncoord
+
+      call get_structure(mol, "mindless01")
+      call new_erf_en_ncoord(ncoord, mol, cutoff=30.0_wp, cut=4.0_wp)
+      call test_cn_list(error, mol, ncoord)
+   end subroutine test_cn_list_mb01_erf_en
+
+
+   subroutine test_cn_list_nacl_erf(error)
+      type(error_type), allocatable, intent(out) :: error
+      type(structure_type) :: mol
+      type(erf_ncoord_type) :: ncoord
+
+      call get_structure(mol, "nacl")
+      call new_erf_ncoord(ncoord, mol, cutoff=25.0_wp, cut=4.0_wp)
+      call test_cn_list(error, mol, ncoord)
+   end subroutine test_cn_list_nacl_erf
+
+
+   subroutine test_cn_list_feo2_erf_en(error)
+      type(error_type), allocatable, intent(out) :: error
+      type(structure_type) :: mol
+      type(erf_en_ncoord_type) :: ncoord
+
+      call get_structure(mol, "feo2")
+      call new_erf_en_ncoord(ncoord, mol, cutoff=25.0_wp)
+      call test_cn_list(error, mol, ncoord)
+   end subroutine test_cn_list_feo2_erf_en
 
 
    subroutine test_hessian_mb04_dexp(error)
