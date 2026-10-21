@@ -76,13 +76,14 @@ module mctc_csrlist_type
    implicit none
    private
 
-   public :: csr_list, new_csr_list, compute_grid, get_linked_cell, grid_type
+   public :: csr_list, new_csr_list, update_list, compute_grid, get_linked_cell, &
+      & grid_type
 
    !> Neighborlist in CSR format
    type :: csr_list
 
-      !> Realspace cutoff for neighborlist generation
-      real(wp), allocatable :: cutoff
+      !> Cutoff squares matrix for the neighborlist
+      real(wp), allocatable :: cutoff2(:, :)
 
       !> Complete asymmetric neighbor list flag
       logical :: complete
@@ -157,7 +158,7 @@ module mctc_csrlist_type
 contains
 
 !> Create a neighbor list for a geometry and cutoff
-subroutine new_csr_list(self, mol, error, wsc, cutoff, trans, complete)
+subroutine new_csr_list(self, mol, error, wsc, cutoff, cutmat, trans, complete)
 
    !> Instance of the neighborlist
    type(csr_list), intent(out) :: self
@@ -174,20 +175,38 @@ subroutine new_csr_list(self, mol, error, wsc, cutoff, trans, complete)
    !> Realspace cutoff for neighborlist generation
    real(wp), intent(in), optional :: cutoff
 
+   !> Cutoff matrix for the neighborlist
+   real(wp), intent(in), optional :: cutmat(:, :)
+
    !> Lattice translation vectors for periodic systems
    real(wp), intent(in), optional :: trans(:, :)
 
    !> Flag for complete neighborlist generation
    logical, intent(in), optional :: complete
 
-   allocate(self%cutoff)
-   self%cutoff = cutoff_def
-   if (present(cutoff)) self%cutoff = cutoff
-
    self%complete = complete_def
    if (present(complete)) self%complete = complete
 
    if (present(trans)) self%trans = trans
+
+   if (present(cutmat)) then
+      if (size(cutmat, 1) /= mol%nid .or. size(cutmat, 2) /= mol%nid) then
+         call fatal_error(error, "Cutoff matrix is wrong size")
+         return
+      else
+         ! Allocate the cutoff2 matrix if the size is correct
+         allocate(self%cutoff2(mol%nid, mol%nid))
+         self%cutoff2 = cutmat(:, :) * cutmat(:, :)
+      end if
+   else if (present(cutoff)) then
+      ! Allocate the cutoff2 matrix using the cutoff value
+      allocate(self%cutoff2(mol%nid, mol%nid))
+      self%cutoff2 = cutoff**2
+   else
+      ! Allocate the cutoff2 matrix using the default cutoff value
+      allocate(self%cutoff2(mol%nid, mol%nid))
+      self%cutoff2 = cutoff_def**2
+   end if
 
    if (any(mol%periodic) .and. present(wsc)) then
       ! Generate the neighborlist and wsc type objects simultaneously
@@ -198,6 +217,162 @@ subroutine new_csr_list(self, mol, error, wsc, cutoff, trans, complete)
    end if
 
 end subroutine new_csr_list
+
+!> Update an existing neighbor list for a new cutoff matrix.
+subroutine update_list(self, mol, cutmat, error, wsc)
+
+   !> Instance of the neighborlist
+   type(csr_list), intent(inout) :: self
+
+   !> Molecular structure data, same geometry as used to build the list
+   type(structure_type), intent(in) :: mol
+
+   !> New cutoff matrix for the neighborlist
+   real(wp), intent(in) :: cutmat(:, :)
+
+   !> Error status
+   type(error_type), allocatable, intent(out) :: error
+
+   !> Wigner-Seitz cell type the list was built with
+   type(wignerseitz_cell), intent(inout), optional :: wsc
+
+   logical :: use_wsc, lnltr
+   integer :: nat, iat, jat, izp, jzp, itr, nn, nimgs, nimg
+   integer(i8) :: kat, kst, pos, itp, itk, npair
+   real(wp) :: vec(3)
+
+   logical, allocatable :: keep(:)
+   integer, allocatable :: cnt(:), icnt(:)
+   integer(i8), allocatable :: inl(:), tridx(:), itr_list(:)
+   integer, allocatable :: nlat(:), nltr(:), nimg_list(:), tridx_list(:)
+
+   if (size(cutmat, 1) /= mol%nid .or. size(cutmat, 2) /= mol%nid) then
+      call fatal_error(error, "Cutoff matrix is wrong size")
+      return
+   end if
+
+   nat = mol%nat
+   use_wsc = any(mol%periodic) .and. present(wsc)
+   lnltr = any(mol%periodic) .and. .not. use_wsc
+
+   if (any(self%cutoff2 < cutmat * cutmat)) then
+      ! A larger cutoff requires pairs missing in the list, rebuild it
+      self%cutoff2 = cutmat * cutmat
+      ! Lattice translations of the previous cutoff might not reach far enough
+      if (lnltr .and. allocated(self%trans)) deallocate(self%trans)
+      if (use_wsc) then
+         call build_list(self, mol, error, wsc)
+      else
+         call build_list(self, mol, error)
+      end if
+      return
+   end if
+
+   ! Otherwise the new list is a subset of the current one
+   self%cutoff2 = cutmat * cutmat
+   if (nat <= 0) return
+   if (lnltr .neqv. allocated(self%nltr)) then
+      call fatal_error(error, "Neighbor list must be updated with the same "// &
+         & "Wigner-Seitz setting it was built with")
+      return
+   end if
+
+   ! 1. Counting pass, marks the entries within the new cutoffs
+   allocate(keep(self%inl(nat + 1) - 1_i8))
+   allocate(cnt(nat), source=0)
+   allocate(icnt(nat), source=0)
+
+   !$omp parallel do schedule(runtime) default(none) &
+   !$omp private(iat, jat, izp, jzp, itr, kat, kst, nn, nimgs, vec) &
+   !$omp shared(self, mol, wsc, nat, use_wsc, lnltr, keep, cnt, icnt)
+   do iat = 1, nat
+      izp = mol%id(iat)
+      kst = self%inl(iat)
+      nn = 0
+      nimgs = 0
+      do kat = kst, self%inl(iat + 1) - 1_i8
+         jat = self%nlat(kat)
+         jzp = mol%id(jat)
+         if (use_wsc) then
+            ! Images are sorted by distance, the first one is the nearest
+            keep(kat) = wsc%nimg_list(kat) > 0
+            if (keep(kat)) then
+               vec = mol%xyz(:, iat) - mol%xyz(:, jat) &
+                  & - self%trans(:, wsc%tridx_list(wsc%itr_list(kat)))
+               keep(kat) = sum(vec**2) <= self%cutoff2(izp, jzp)
+            end if
+            if (keep(kat)) nimgs = nimgs + wsc%nimg_list(kat)
+         else
+            itr = 1
+            if (lnltr) itr = self%nltr(kat)
+            vec = mol%xyz(:, iat) - self%trans(:, itr) - mol%xyz(:, jat)
+            keep(kat) = sum(vec**2) <= self%cutoff2(izp, jzp)
+         end if
+         ! The diagonal entry is always kept, only its images might be dropped
+         if (keep(kat) .and. kat > kst) nn = nn + 1
+      end do
+      cnt(iat) = nn
+      if (use_wsc) icnt(iat) = nimgs
+   end do
+   !$omp end parallel do
+
+   ! 2. CSR pointer array filling
+   allocate(inl(nat + 1), source=1_i8)
+   if (use_wsc) allocate(tridx(nat + 1), source=1_i8)
+   do iat = 1, nat
+      inl(iat + 1) = inl(iat) + int(cnt(iat), i8) + 1_i8
+      if (use_wsc) tridx(iat + 1) = tridx(iat) + int(icnt(iat), i8)
+   end do
+   npair = inl(nat + 1) - 1_i8
+
+   ! 3. Allocate the CSR arrays of the updated list
+   allocate(nlat(npair))
+   if (lnltr) allocate(nltr(npair))
+   if (use_wsc) then
+      allocate(nimg_list(npair))
+      allocate(itr_list(npair + 1))
+      allocate(tridx_list(max(tridx(nat + 1) - 1_i8, 1_i8)))
+   end if
+
+   ! 4. Filling pass, copies the kept entries and their images
+   !$omp parallel do schedule(runtime) default(none) &
+   !$omp private(iat, kat, kst, pos, itp, itk, nimg) &
+   !$omp shared(self, wsc, nat, use_wsc, lnltr, keep, inl, tridx) &
+   !$omp shared(nlat, nltr, nimg_list, itr_list, tridx_list)
+   do iat = 1, nat
+      kst = self%inl(iat)
+      pos = inl(iat)
+      if (use_wsc) itp = tridx(iat)
+      do kat = kst, self%inl(iat + 1) - 1_i8
+         if (kat > kst .and. .not. keep(kat)) cycle
+         nlat(pos) = self%nlat(kat)
+         if (lnltr) nltr(pos) = self%nltr(kat)
+         if (use_wsc) then
+            nimg = 0
+            if (keep(kat)) nimg = wsc%nimg_list(kat)
+            itk = wsc%itr_list(kat)
+            nimg_list(pos) = nimg
+            itr_list(pos) = itp
+            tridx_list(itp:itp + nimg - 1) = wsc%tridx_list(itk:itk + nimg - 1)
+            itp = itp + nimg
+         end if
+         pos = pos + 1_i8
+      end do
+   end do
+   !$omp end parallel do
+
+   if (use_wsc) then
+      itr_list(npair + 1) = tridx(nat + 1)
+      wsc%nimg_max = maxval(nimg_list)
+      call move_alloc(nimg_list, wsc%nimg_list)
+      call move_alloc(itr_list, wsc%itr_list)
+      call move_alloc(tridx_list, wsc%tridx_list)
+   end if
+   call move_alloc(inl, self%inl)
+   call move_alloc(nlat, self%nlat)
+   if (lnltr) call move_alloc(nltr, self%nltr)
+
+end subroutine update_list
 
 !> Build the CSR neighbor list for a structure
 subroutine build_list(self, mol, error, wsc)
@@ -217,7 +392,8 @@ subroutine build_list(self, mol, error, wsc)
    type(grid_type) :: grid
 
    logical :: periodic, use_wsc, lshift, lmulti
-   integer :: nat, iat, nself, nimg_max, nimg_count, self_tridx(27)
+   integer :: nat, iat, izp, nimg_max, nimg_count, self_tridx(27)
+   integer, allocatable :: nself(:)
    integer(i8) :: npair, nimgs
    real(wp) :: cutoff2, lat_inv(3, 3), cell_w(3), min_xyz(3), zero_vec(3), r2_min, det
 
@@ -226,11 +402,12 @@ subroutine build_list(self, mol, error, wsc)
    real(wp), allocatable :: trans(:, :)
 
    nat = mol%nat
-   cutoff2 = self%cutoff**2
+   ! The largest pair cutoff determines the grid and the lattice translations
+   cutoff2 = max(maxval(self%cutoff2), 0.0_wp)
    periodic = any(mol%periodic)
    use_wsc = present(wsc)
    nimg_max = 0
-   nself = 0
+   allocate(nself(mol%nat), source=0)
    self_tridx = 0
    min_xyz = 0.0_wp
 
@@ -240,22 +417,28 @@ subroutine build_list(self, mol, error, wsc)
       self%trans = trans
       wsc%trans = trans
       wsc%nimg_max = 0
+      if (allocated(wsc%nimg_list)) deallocate(wsc%nimg_list)
+      if (allocated(wsc%itr_list)) deallocate(wsc%itr_list)
+      if (allocated(wsc%tridx_list)) deallocate(wsc%tridx_list)
    else if (.not. allocated(self%trans)) then
       if (periodic) then
-         call get_lattice_points(mol%periodic, mol%lattice, self%cutoff, trans)
+         call get_lattice_points(mol%periodic, mol%lattice, sqrt(cutoff2), trans)
          call move_alloc(trans, self%trans)
       else
          self%trans = trans_def
       end if
    end if
 
+   ! Release the arrays of a previous build, e.g. from update_list
    if (allocated(self%inl)) deallocate(self%inl)
+   if (allocated(self%nlat)) deallocate(self%nlat)
+   if (allocated(self%nltr)) deallocate(self%nltr)
    allocate(self%inl(nat + 1), source=1_i8)
    if (nat <= 0) return
 
    ! 2. Linked cell grid. Each orthogonal height of the linked-cell is larger
    ! or equal to the cutoff distance.
-   call compute_grid(mol, self%cutoff, grid, det, lat_inv, cell_w)
+   call compute_grid(mol, sqrt(cutoff2), grid, det, lat_inv, cell_w)
    if (.not. periodic) min_xyz = minval(mol%xyz, dim=2) - buffer
    ! Fill the atoms into the linked-cell grid and sort them accordingly
    call sort_atoms(mol, grid, lat_inv, min_xyz, cell_w, lshift)
@@ -276,8 +459,19 @@ subroutine build_list(self, mol, error, wsc)
    if (use_wsc) then
       zero_vec = 0.0_wp
       call get_pairs(self%trans, zero_vec, nimg_count, self_tridx, r2_min)
-      if (nimg_count > 0 .and. r2_min <= cutoff2) nself = nimg_count
-      nimg_max = nself
+      if (nimg_count > 0) then
+         ! The self-images are kept depending on the cutoff of each species
+         !$omp parallel do schedule(runtime) default(none) &
+         !$omp private(iat, izp) shared(nself, nimg_count, r2_min, self, mol)
+         do iat = 1, mol%nat
+            izp = mol%id(iat)
+            if (r2_min <= self%cutoff2(izp, izp)) then
+               nself(iat) = nimg_count
+            end if
+         end do
+         !$omp end parallel do
+      end if
+      nimg_max = maxval(nself)
    end if
 
    ! 5. Counting pass, determines the exact size of every CSR array
@@ -285,7 +479,7 @@ subroutine build_list(self, mol, error, wsc)
    allocate(cnt(nat), source=0)
    allocate(icnt(nat), source=0)
    if (use_wsc) allocate(tridx(nat + 1), source=1_i8)
-   call neighbor_pass(self, grid, .false., tridx, cnt, icnt, nself, self_tridx, &
+   call neighbor_pass(self, mol, grid, .false., tridx, cnt, icnt, nself, self_tridx, &
       & nimg_max, wsc, error)
 
    ! 6. CSR pointer array filling
@@ -314,7 +508,7 @@ subroutine build_list(self, mol, error, wsc)
    end if
 
    ! 8. Filling pass
-   call neighbor_pass(self, grid, .true., tridx, cnt, icnt, nself, self_tridx, &
+   call neighbor_pass(self, mol, grid, .true., tridx, cnt, icnt, nself, self_tridx, &
       & nimg_max, wsc, error)
 
    if (use_wsc) then
@@ -325,11 +519,14 @@ subroutine build_list(self, mol, error, wsc)
 end subroutine build_list
 
 !> Counting and filling pass over all cell pairs
-subroutine neighbor_pass(self, grid, lstore, tridx, cnt, icnt, nself, &
+subroutine neighbor_pass(self, mol, grid, lstore, tridx, cnt, icnt, nself, &
    & self_tridx, nimg_max, wsc, error)
 
    !> Instance of the neighborlist, filled if lstore is set
    type(csr_list), intent(inout) :: self
+
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
 
    !> Cell-sorted linked cell grid
    type(grid_type), intent(in) :: grid
@@ -347,7 +544,7 @@ subroutine neighbor_pass(self, grid, lstore, tridx, cnt, icnt, nself, &
    integer, intent(inout) :: icnt(:)
 
    !> Number of images of the diagonal entry
-   integer, intent(in) :: nself
+   integer, intent(in) :: nself(:)
 
    !> Image indices of the diagonal entry
    integer, intent(in) :: self_tridx(:)
@@ -364,16 +561,15 @@ subroutine neighbor_pass(self, grid, lstore, tridx, cnt, icnt, nself, &
    integer :: nsten, ntr, nmax
    integer :: ic, shift, ns, jc, lcatidx, lcatidxst, lcatidxfin
    integer :: checkat, checkatst, checkatfin, tr, trst, trfin
-   integer :: iat, jmin, nn, nimgs, nimg_count, tridx_arr(27)
+   integer :: iat, izp, jzp, jmin, nn, nimgs, nimg_count, tridx_arr(27)
    integer(i8) :: pos, itp
-   real(wp) :: cutoff2, xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, r2_min, vec(3)
+   real(wp) :: xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, r2_min, vec(3)
    logical :: use_wsc, lnltr, complete
    real(wp), allocatable :: trans(:,:)
 
    integer, allocatable :: jcl(:), itrl(:)
 
    nsten = size(grid%off, 2)
-   cutoff2 = self%cutoff**2
    complete = self%complete
    use_wsc = present(wsc)
    allocate(trans, source=self%trans)
@@ -385,11 +581,11 @@ subroutine neighbor_pass(self, grid, lstore, tridx, cnt, icnt, nself, &
    !$omp parallel default(none)&
    !$omp& private(ic, shift, ns, jc, lcatidx, lcatidxst, lcatidxfin) &
    !$omp& private(checkat, checkatst, checkatfin, tr, trst, trfin) &
-   !$omp& private(iat, jmin, nn, nimgs, nimg_count, tridx_arr, pos, itp) &
+   !$omp& private(iat, izp, jzp, jmin, nn, nimgs, nimg_count, tridx_arr, pos, itp) &
    !$omp& private(xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, r2_min, vec) &
    !$omp& private(jcl, itrl) &
-   !$omp& shared(grid, error, self, lstore, tridx, cnt, icnt, nself, self_tridx) &
-   !$omp& shared(nimg_max, wsc, cutoff2, complete, use_wsc, lnltr) &
+   !$omp& shared(grid, mol, error, self, lstore, tridx, cnt, icnt, nself, self_tridx) &
+   !$omp& shared(nimg_max, wsc, complete, use_wsc, lnltr) &
    !$omp& shared(nsten, ntr, trans) &
    !$omp& reduction(max: nmax)
    allocate(jcl(nsten), itrl(nsten))
@@ -407,6 +603,7 @@ subroutine neighbor_pass(self, grid, lstore, tridx, cnt, icnt, nself, &
       ! B. Loop over all atoms in the current cell
       do lcatidx = lcatidxst, lcatidxfin
          iat = grid%cellatidx(lcatidx)
+         izp = mol%id(iat)
          xi = grid%x(lcatidx)
          yi = grid%y(lcatidx)
          zi = grid%z(lcatidx)
@@ -432,11 +629,11 @@ subroutine neighbor_pass(self, grid, lstore, tridx, cnt, icnt, nself, &
             if (lnltr) self%nltr(pos) = 1
             if (use_wsc) then
                itp = tridx(iat)
-               wsc%nimg_list(pos) = nself
+               wsc%nimg_list(pos) = nself(iat)
                wsc%itr_list(pos) = int(itp)
-               if (nself > 0) then
-                  wsc%tridx_list(itp:itp + nself - 1) = self_tridx(1:nself)
-                  itp = itp + nself
+               if (nself(iat) > 0) then
+                  wsc%tridx_list(itp:itp + nself(iat) - 1) = self_tridx(1:nself(iat))
+                  itp = itp + nself(iat)
                end if
             end if
          end if
@@ -460,11 +657,12 @@ subroutine neighbor_pass(self, grid, lstore, tridx, cnt, icnt, nself, &
             if (use_wsc) then
                do checkat = checkatst, checkatfin
                   if (grid%cellatidx(checkat) == iat) cycle
+                  jzp = mol%id(grid%cellatidx(checkat))
                   vec(1) = xi - grid%x(checkat)
                   vec(2) = yi - grid%y(checkat)
                   vec(3) = zi - grid%z(checkat)
                   call get_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
-                  if (nimg_count <= 0 .or. r2_min > cutoff2) cycle
+                  if (nimg_count <= 0 .or. r2_min > self%cutoff2(izp, jzp)) cycle
                   nn = nn + 1
                   nmax = max(nmax, nimg_count)
                   if (lstore) then
@@ -498,11 +696,12 @@ subroutine neighbor_pass(self, grid, lstore, tridx, cnt, icnt, nself, &
                yit = yi - trans(2, tr)
                zit = zi - trans(3, tr)
                do checkat = checkatst, checkatfin
+                  jzp = mol%id(grid%cellatidx(checkat))
                   dx = xit - grid%x(checkat)
                   dy = yit - grid%y(checkat)
                   dz = zit - grid%z(checkat)
                   r2 = dx*dx + dy*dy + dz*dz
-                  if (r2 > cutoff2 .or. r2 < epsilon(0.0_wp)) cycle
+                  if (r2 > self%cutoff2(izp, jzp) .or. r2 < epsilon(0.0_wp)) cycle
                   nn = nn + 1
                   if (lstore) then
                      self%nlat(pos + nn) = grid%cellatidx(checkat)
@@ -527,7 +726,7 @@ subroutine neighbor_pass(self, grid, lstore, tridx, cnt, icnt, nself, &
                   & "exceeds the addressable range of the CSR index arrays")
                exit
             end if
-            if (use_wsc) icnt(iat) = nimgs + nself
+            if (use_wsc) icnt(iat) = nimgs + nself(iat)
          end if
       end do
    end do

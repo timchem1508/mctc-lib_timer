@@ -14,7 +14,7 @@
 
 !> Unit tests for compressed sparse row neighbor lists
 module test_csrlist
-   use mctc_csrlist, only : csr_list, new_csr_list, compute_grid, &
+   use mctc_csrlist, only : csr_list, new_csr_list, update_list, compute_grid, &
       & get_linked_cell, grid_type
    use mctc_cutoff, only : get_lattice_points
    use mctc_env, only : wp, i8, timer_type, format_time
@@ -73,7 +73,16 @@ subroutine collect_csrlist(testsuite)
       & new_unittest("csr-vs-verlet-x04-complete", test_list_x04_complete), &
       & new_unittest("csr-vs-verlet-x05-complete", test_list_x05_complete), &
       & new_unittest("nacl-wsc", test_nacl_wsc), &
-      & new_unittest("feo2-wsc", test_feo2_wsc) &
+      & new_unittest("feo2-wsc", test_feo2_wsc), &
+      & new_unittest("update-mindless01", test_update_mb01), &
+      & new_unittest("update-mindless01-complete", test_update_mb01_complete), &
+      & new_unittest("update-feo2", test_update_feo2), &
+      & new_unittest("update-feo2-complete", test_update_feo2_complete), &
+      & new_unittest("update-x02", test_update_x02), &
+      & new_unittest("update-nacl-wsc", test_update_nacl_wsc), &
+      & new_unittest("update-feo2-wsc-complete", test_update_feo2_wsc_complete), &
+      & new_unittest("update-x02-wsc", test_update_x02_wsc), &
+      & new_unittest("update-wrong-size", test_update_wrong_size, should_fail=.true.) &
       & ]
 
 end subroutine collect_csrlist
@@ -456,6 +465,259 @@ subroutine test_wsc(error, mol, cutoff, cmp, ref_list, ref_nimg)
    end do
 
 end subroutine test_wsc
+
+
+!> Species dependent cutoff matrix for the neighbor list
+subroutine get_cutmat(mol, scale, cutmat)
+
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
+
+   !> Scaling factor applied to all cutoffs
+   real(wp), intent(in) :: scale
+
+   !> Cutoff matrix for each pair of species
+   real(wp), allocatable, intent(out) :: cutmat(:, :)
+
+   integer :: isp, jsp
+
+   allocate(cutmat(mol%nid, mol%nid))
+   do isp = 1, mol%nid
+      do jsp = 1, mol%nid
+         cutmat(jsp, isp) = scale * (7.0_wp + 1.5_wp*real(isp + jsp, wp) &
+            & + 2.0_wp*real(mod(isp*jsp, 3), wp))
+      end do
+   end do
+
+end subroutine get_cutmat
+
+
+!> Compare two neighbor lists, the order of the neighbors within a row may differ
+subroutine compare_list(error, mol, list, ref)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
+
+   !> Neighbor list to check
+   type(csr_list), intent(in) :: list
+
+   !> Reference neighbor list
+   type(csr_list), intent(in) :: ref
+
+   logical :: found
+   integer :: iat, jat
+   integer(i8) :: kat, kst, kfin
+
+   if (any(list%inl /= ref%inl)) then
+      call test_failed(error, "neighbor list pointer array does not match reference.")
+      write(*,*) "Generated pointer:", list%inl
+      write(*,*) "Reference pointer:", ref%inl
+      return
+   end if
+
+   do iat = 1, mol%nat
+      kst = ref%inl(iat)
+      kfin = ref%inl(iat+1) - 1
+      if (list%nlat(kst) /= iat) then
+         call test_failed(error, "diagonal entry is not the first of its row.")
+         return
+      end if
+      ! Each neighbor and translation occurs once per row
+      do kat = kst + 1, kfin
+         jat = list%nlat(kat)
+         if (allocated(list%nltr)) then
+            found = any(jat == ref%nlat(kst+1:kfin) &
+               & .and. list%nltr(kat) == ref%nltr(kst+1:kfin))
+         else
+            found = any(jat == ref%nlat(kst+1:kfin))
+         end if
+         if (.not. found) then
+            call test_failed(error, "neighbor list array does not match reference.")
+            print"(20a)", "Generated row:"
+            print"(10i6)", list%nlat(kst:kfin)
+            print"(20a)", "Reference row:"
+            print"(10i6)", ref%nlat(kst:kfin)
+            return
+         end if
+      end do
+   end do
+
+end subroutine compare_list
+
+
+!> Compare two Wigner-Seitz neighbor lists including the images of each pair
+subroutine compare_wsc_list(error, mol, list, wsc, ref, ref_wsc)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
+
+   !> Neighbor list to check
+   type(csr_list), intent(in) :: list
+
+   !> Wigner-Seitz cell of the neighbor list to check
+   type(wignerseitz_cell), intent(in) :: wsc
+
+   !> Reference neighbor list
+   type(csr_list), intent(in) :: ref
+
+   !> Wigner-Seitz cell of the reference neighbor list
+   type(wignerseitz_cell), intent(in) :: ref_wsc
+
+   integer :: iat, jat, nimg
+   integer(i8) :: kat, kref, kst, kfin, itr, ref_itr
+
+   if (any(list%inl /= ref%inl)) then
+      call test_failed(error, "neighbor list pointer array does not match reference.")
+      write(*,*) "Generated pointer:", list%inl
+      write(*,*) "Reference pointer:", ref%inl
+      return
+   end if
+
+   if (wsc%nimg_max /= ref_wsc%nimg_max) then
+      call test_failed(error, "maximum number of WSC images does not match reference.")
+      write(*,*) "Generated:", wsc%nimg_max, "Reference:", ref_wsc%nimg_max
+      return
+   end if
+
+   do iat = 1, mol%nat
+      kst = ref%inl(iat)
+      kfin = ref%inl(iat+1) - 1
+      ! Each neighbor occurs once per row, the diagonal entry included
+      do kat = kst, kfin
+         jat = list%nlat(kat)
+         do kref = kst, kfin
+            if (ref%nlat(kref) == jat) exit
+         end do
+         if (kref > kfin) then
+            call test_failed(error, "neighbor list array does not match reference.")
+            print"(20a)", "Generated row:"
+            print"(10i6)", list%nlat(kst:kfin)
+            print"(20a)", "Reference row:"
+            print"(10i6)", ref%nlat(kst:kfin)
+            return
+         end if
+
+         nimg = wsc%nimg_list(kat)
+         itr = wsc%itr_list(kat)
+         ref_itr = ref_wsc%itr_list(kref)
+         if (nimg /= ref_wsc%nimg_list(kref)) then
+            call test_failed(error, &
+               & "neighbor list WSC translations number does not match reference.")
+            write(*,*) "Pair:", iat, jat
+            write(*,*) "Generated:", nimg, "Reference:", ref_wsc%nimg_list(kref)
+            return
+         end if
+         if (any(wsc%tridx_list(itr:itr+nimg-1) &
+            & /= ref_wsc%tridx_list(ref_itr:ref_itr+nimg-1))) then
+            call test_failed(error, &
+               & "neighbor list WSC translations do not match reference.")
+            write(*,*) "Pair:", iat, jat
+            write(*,*) "Generated:", wsc%tridx_list(itr:itr+nimg-1)
+            write(*,*) "Reference:", ref_wsc%tridx_list(ref_itr:ref_itr+nimg-1)
+            return
+         end if
+      end do
+   end do
+
+end subroutine compare_wsc_list
+
+
+!> Check the update of a neighbor list for a new cutoff matrix against a new list
+subroutine test_update_gen(error, mol, cmp)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
+
+   !> Whether a complete or a symmetrical reduced map should be generated
+   logical, intent(in) :: cmp
+
+   type(csr_list), allocatable :: list, ref
+   real(wp), allocatable :: cutmat(:, :), cutmat_small(:, :), trans(:, :)
+
+   call get_cutmat(mol, 1.0_wp, cutmat)
+   call get_cutmat(mol, 0.55_wp, cutmat_small)
+   ! Shrink a single species pair even further to drop its periodic self-images
+   cutmat_small(1, 1) = 0.3_wp * cutmat_small(1, 1)
+   ! Common translations, such that the translation indices are comparable
+   call get_lattice_points(mol%periodic, mol%lattice, maxval(cutmat), trans)
+
+   allocate(list, ref)
+
+   ! Smaller cutoffs remove the pairs beyond them from the list
+   call new_csr_list(list, mol, error, cutmat=cutmat, trans=trans, complete=cmp)
+   if (allocated(error)) return
+   call update_list(list, mol, cutmat_small, error)
+   if (allocated(error)) return
+   call new_csr_list(ref, mol, error, cutmat=cutmat_small, trans=trans, complete=cmp)
+   if (allocated(error)) return
+   call compare_list(error, mol, list, ref)
+   if (allocated(error)) return
+
+   ! Larger cutoffs rebuild the list
+   call new_csr_list(list, mol, error, cutmat=cutmat_small, complete=cmp)
+   if (allocated(error)) return
+   call update_list(list, mol, cutmat, error)
+   if (allocated(error)) return
+   call new_csr_list(ref, mol, error, cutmat=cutmat, complete=cmp)
+   if (allocated(error)) return
+   call compare_list(error, mol, list, ref)
+
+end subroutine test_update_gen
+
+
+!> Check the update of a Wigner-Seitz neighbor list for a new cutoff matrix
+!> against a new list
+subroutine test_update_wsc_gen(error, mol, cmp)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
+
+   !> Whether a complete or a symmetrical reduced map should be generated
+   logical, intent(in) :: cmp
+
+   type(csr_list), allocatable :: list, ref
+   type(wignerseitz_cell) :: wsc, ref_wsc
+   real(wp), allocatable :: cutmat(:, :), cutmat_small(:, :)
+
+   call get_cutmat(mol, 1.0_wp, cutmat)
+   call get_cutmat(mol, 0.55_wp, cutmat_small)
+   ! Shrink a single species pair even further to drop its periodic self-images
+   cutmat_small(1, 1) = 0.3_wp * cutmat_small(1, 1)
+
+   allocate(list, ref)
+
+   ! Smaller cutoffs remove the pairs and their images from the list
+   call new_csr_list(list, mol, error, wsc, cutmat=cutmat, complete=cmp)
+   if (allocated(error)) return
+   call update_list(list, mol, cutmat_small, error, wsc)
+   if (allocated(error)) return
+   call new_csr_list(ref, mol, error, ref_wsc, cutmat=cutmat_small, complete=cmp)
+   if (allocated(error)) return
+   call compare_wsc_list(error, mol, list, wsc, ref, ref_wsc)
+   if (allocated(error)) return
+
+   ! Larger cutoffs rebuild the list, reusing the Wigner-Seitz cells
+   call new_csr_list(list, mol, error, wsc, cutmat=cutmat_small, complete=cmp)
+   if (allocated(error)) return
+   call update_list(list, mol, cutmat, error, wsc)
+   if (allocated(error)) return
+   call new_csr_list(ref, mol, error, ref_wsc, cutmat=cutmat, complete=cmp)
+   if (allocated(error)) return
+   call compare_wsc_list(error, mol, list, wsc, ref, ref_wsc)
+
+end subroutine test_update_wsc_gen
 
 subroutine test_grid_methane(error)
 
@@ -1012,5 +1274,130 @@ subroutine test_feo2_wsc(error)
    call test_wsc(error, mol, cutoff, .false., ref_list, ref_nimg)
 
 end subroutine test_feo2_wsc
+
+
+subroutine test_update_mb01(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_structure(mol, "mindless01")
+   call test_update_gen(error, mol, .false.)
+
+end subroutine test_update_mb01
+
+
+subroutine test_update_mb01_complete(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_structure(mol, "mindless01")
+   call test_update_gen(error, mol, .true.)
+
+end subroutine test_update_mb01_complete
+
+
+subroutine test_update_feo2(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_structure(mol, "feo2")
+   call test_update_gen(error, mol, .false.)
+
+end subroutine test_update_feo2
+
+
+subroutine test_update_feo2_complete(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_structure(mol, "feo2")
+   call test_update_gen(error, mol, .true.)
+
+end subroutine test_update_feo2_complete
+
+
+subroutine test_update_x02(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_structure(mol, "x02")
+   call test_update_gen(error, mol, .false.)
+
+end subroutine test_update_x02
+
+
+subroutine test_update_nacl_wsc(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_structure(mol, "nacl")
+   call test_update_wsc_gen(error, mol, .false.)
+
+end subroutine test_update_nacl_wsc
+
+
+subroutine test_update_feo2_wsc_complete(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_structure(mol, "feo2")
+   call test_update_wsc_gen(error, mol, .true.)
+
+end subroutine test_update_feo2_wsc_complete
+
+
+subroutine test_update_x02_wsc(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_structure(mol, "x02")
+   call test_update_wsc_gen(error, mol, .false.)
+
+end subroutine test_update_x02_wsc
+
+
+subroutine test_update_wrong_size(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(csr_list), allocatable :: list
+   real(wp), allocatable :: cutmat(:, :)
+
+   call get_structure(mol, "mindless01")
+   call get_cutmat(mol, 1.0_wp, cutmat)
+
+   allocate(list)
+   call new_csr_list(list, mol, error, cutmat=cutmat)
+   if (allocated(error)) return
+   ! A cutoff matrix for a single species does not fit the structure
+   call update_list(list, mol, cutmat(:1, :1), error)
+
+end subroutine test_update_wrong_size
 
 end module test_csrlist
