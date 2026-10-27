@@ -14,5 +14,6 @@
 
 srcs += files(
   'linal.f90',
+  'screening.f90',
   'type.f90',
 )

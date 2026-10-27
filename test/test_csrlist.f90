@@ -15,7 +15,7 @@
 !> Unit tests for compressed sparse row neighbor lists
 module test_csrlist
    use mctc_csrlist, only : csr_list, new_csr_list, compute_grid, &
-      & get_linked_cell, grid_type
+      & get_linked_cell, grid_type, distance_screening
    use mctc_cutoff, only : get_lattice_points
    use mctc_env, only : wp, i8, timer_type, format_time
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, &
@@ -244,13 +244,14 @@ subroutine test_distance(error, mol, cutoff, trans, cmp)
    logical, intent(in) :: cmp
 
    type(csr_list), allocatable :: list
+   type(distance_screening) :: screen
 
    real(wp) :: vec(3)
    integer :: iat, jat, itr
    integer(i8) :: kat
 
    allocate(list)
-   call new_csr_list(list, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
+   call new_csr_list(list, screen, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
 
    do iat = 1, mol%nat
       do kat = list%inl(iat) + 1, list%inl(iat+1) - 1
@@ -290,13 +291,14 @@ subroutine test_mol_list_gen(error, mol, cutoff, trans, cmp)
    logical, intent(in) :: cmp
 
    type(csr_list), allocatable :: list
+   type(distance_screening) :: screen
 
    integer, allocatable :: ref_ptr(:), ref_list(:), ref_nltr(:)
    integer :: iat, jat
    integer(i8) :: kat
 
    allocate(list)
-   call new_csr_list(list, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
+   call new_csr_list(list, screen, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
 
    allocate(ref_ptr(mol%nat + 1))
    call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp)
@@ -347,6 +349,7 @@ subroutine test_pbc_list_gen(error, mol, cutoff, trans, cmp)
    logical, intent(in) :: cmp
 
    type(csr_list), allocatable   :: list
+   type(distance_screening) :: screen
 
    ! Reference Lists
    integer, allocatable :: ref_ptr(:), ref_list(:), ref_nltr(:)
@@ -354,7 +357,7 @@ subroutine test_pbc_list_gen(error, mol, cutoff, trans, cmp)
    integer(i8) :: kat
 
    allocate(list)
-   call new_csr_list(list, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
+   call new_csr_list(list, screen, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
 
    allocate(ref_ptr(mol%nat + 1))
    call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp)
@@ -412,13 +415,14 @@ subroutine test_wsc(error, mol, cutoff, cmp, ref_list, ref_nimg)
    integer, intent(in) :: ref_nimg(:)
 
    type(csr_list), allocatable :: list
+   type(distance_screening) :: screen
    type(wignerseitz_cell) :: wsc
    integer :: iat, jat, ntr, tridx
    integer(i8) :: itr, kat
    real(wp) :: vec(3)
 
    allocate(list)
-   call new_csr_list(list, mol, error, wsc, cutoff=cutoff, complete=cmp)
+   call new_csr_list(list, screen, mol, error, wsc, cutoff=cutoff, complete=cmp)
 
    do iat = 1, mol%nat
       do kat = list%inl(iat), list%inl(iat+1) - 1
