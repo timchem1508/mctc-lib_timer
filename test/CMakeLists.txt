@@ -17,6 +17,7 @@ set(
   tests
   "csrlist"
   "csrlist-linal"
+  "csrlist-screening"
   "cutoff"
   "data"
   "math"

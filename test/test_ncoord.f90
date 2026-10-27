@@ -13,7 +13,7 @@
 ! limitations under the License.
 
 module test_ncoord
-   use mctc_csrlist, only : csr_list, new_csr_list
+   use mctc_csrlist, only : csr_list, new_csr_list, distance_screening
    use mctc_cutoff, only : get_lattice_points
    use mctc_data_covrad, only : get_covalent_rad
    use mctc_data_paulingen, only : get_pauling_en
@@ -292,6 +292,7 @@ contains
       class(ncoord_type), intent(in) :: ncoord
 
       type(csr_list) :: list
+      type(distance_screening) :: screen
       real(wp), allocatable :: cn(:), cnl(:), lattr(:, :)
 
       allocate(cn(mol%nat), cnl(mol%nat))
@@ -300,7 +301,7 @@ contains
 
       call ncoord%get_coordination_number(mol, lattr, cn)
 
-      call new_csr_list(list, mol, error, cutoff=ncoord%cutoff, complete=.false.)
+      call new_csr_list(list, screen, mol, error, cutoff=ncoord%cutoff, complete=.false.)
       if (allocated(error)) return
       call ncoord%get_coordination_number(mol, lattr, cnl, list=list)
 
@@ -311,7 +312,7 @@ contains
          return
       end if
 
-      call new_csr_list(list, mol, error, cutoff=ncoord%cutoff, complete=.true.)
+      call new_csr_list(list, screen, mol, error, cutoff=ncoord%cutoff, complete=.true.)
       if (allocated(error)) return
       call ncoord%get_coordination_number(mol, lattr, cnl, list=list)
 
@@ -339,6 +340,7 @@ contains
       integer :: iat, jat
       integer(i8) :: kat
       type(csr_list) :: list
+      type(distance_screening) :: screen
       real(wp), allocatable :: cn(:), cnl(:), dcnp(:), lattr(:, :)
       real(wp), allocatable :: dcndr(:, :, :), dcndL(:, :, :)
       real(wp), allocatable :: dcndrlist(:, :), dcndrl(:, :, :), dcndLl(:, :, :)
@@ -352,7 +354,7 @@ contains
 
       call ncoord%get_coordination_number(mol, lattr, cn, dcndr, dcndL)
 
-      call new_csr_list(list, mol, error, cutoff=ncoord%cutoff, complete=.false.)
+      call new_csr_list(list, screen, mol, error, cutoff=ncoord%cutoff, complete=.false.)
       if (allocated(error)) return
 
       allocate(dcndrlist(3, size(list%nlat)))
@@ -416,6 +418,7 @@ contains
 
       integer :: iat
       type(csr_list) :: list
+      type(distance_screening) :: screen
       real(wp) :: sigma(3, 3), sigmal(3, 3)
       real(wp), allocatable :: dEdcn(:), gradient(:, :), gradl(:, :), lattr(:, :)
 
@@ -431,7 +434,7 @@ contains
       sigma(:, :) = 0.0_wp
       call ncoord%add_coordination_number_derivs(mol, lattr, dEdcn, gradient, sigma)
 
-      call new_csr_list(list, mol, error, cutoff=ncoord%cutoff, complete=.false.)
+      call new_csr_list(list, screen, mol, error, cutoff=ncoord%cutoff, complete=.false.)
       if (allocated(error)) return
 
       gradl(:, :) = 0.0_wp
@@ -453,7 +456,7 @@ contains
          return
       end if
 
-      call new_csr_list(list, mol, error, cutoff=ncoord%cutoff, complete=.true.)
+      call new_csr_list(list, screen, mol, error, cutoff=ncoord%cutoff, complete=.true.)
       if (allocated(error)) return
 
       gradl(:, :) = 0.0_wp
@@ -491,6 +494,7 @@ contains
 
       integer :: iat
       type(csr_list) :: list
+      type(distance_screening) :: screen
       real(wp), allocatable :: dEdcn(:), hessian(:, :), hessl(:, :), lattr(:, :)
 
       allocate(dEdcn(mol%nat), hessian(3*mol%nat, 3*mol%nat), &
@@ -505,7 +509,7 @@ contains
       hessian(:, :) = 0.0_wp
       call ncoord%add_coordination_number_hessian(mol, lattr, dEdcn, hessian)
 
-      call new_csr_list(list, mol, error, cutoff=ncoord%cutoff, complete=.false.)
+      call new_csr_list(list, screen, mol, error, cutoff=ncoord%cutoff, complete=.false.)
       if (allocated(error)) return
 
       hessl(:, :) = 0.0_wp
@@ -519,7 +523,7 @@ contains
          return
       end if
 
-      call new_csr_list(list, mol, error, cutoff=ncoord%cutoff, complete=.true.)
+      call new_csr_list(list, screen, mol, error, cutoff=ncoord%cutoff, complete=.true.)
       if (allocated(error)) return
 
       hessl(:, :) = 0.0_wp

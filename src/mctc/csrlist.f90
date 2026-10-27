@@ -23,8 +23,9 @@
 
 module mctc_csrlist
    use mctc_csrlist_linal, only : spgemv_csr, spsymv_csr, spmm_csr, spmspv_csr
+   use mctc_csrlist_screening, only : screening_type
    use mctc_csrlist_type, only : csr_list, new_csr_list, compute_grid, get_linked_cell, &
-      & grid_type
+      & grid_type, distance_screening
    implicit none
    public
 

@@ -70,6 +70,7 @@
 module mctc_csrlist_type
    use, intrinsic :: iso_fortran_env, only : error_unit
    use mctc_cutoff, only : get_lattice_points, get_periodic_axes
+   use mctc_csrlist_screening, only : screening_type
    use mctc_env, only : wp, i8, error_type, fatal_error
    use mctc_io, only : structure_type
    use mctc_io_math, only : matdet_3x3, matinv_3x3, crossprod
@@ -79,6 +80,7 @@ module mctc_csrlist_type
    private
 
    public :: csr_list, new_csr_list, compute_grid, get_linked_cell, grid_type
+   public :: distance_screening
 
    interface new_csr_list
       module procedure :: new_csr_list
@@ -106,6 +108,14 @@ module mctc_csrlist_type
       !> Lattice translation vector
       real(wp), allocatable :: trans(:, :)
    end type csr_list
+
+   !> Screening by the interatomic distance, the threshold is set to the
+   !> squared cutoff of the neighbor list on construction
+   type, extends(screening_type) :: distance_screening
+   contains
+      !> Check if a pair of atoms should be included based on a cutoff
+      procedure :: check_pair => check_pair_distance
+   end type distance_screening
 
 
    !> Cell-sorted linked cell grid used during the neighbor search
@@ -167,10 +177,13 @@ module mctc_csrlist_type
 contains
 
 !> Create a neighbor list for a geometry and cutoff
-subroutine new_csr_list(self, mol, error, wsc, cutoff, trans, complete)
+subroutine new_csr_list(self, screen, mol, error, wsc, cutoff, trans, complete)
 
    !> Instance of the neighborlist
    type(csr_list), intent(out) :: self
+
+   !> Screening instance
+   class(screening_type), intent(inout) :: screen
 
    !> Structure type
    type(structure_type), intent(in) :: mol
@@ -194,6 +207,11 @@ subroutine new_csr_list(self, mol, error, wsc, cutoff, trans, complete)
    self%cutoff = cutoff_def
    if (present(cutoff)) self%cutoff = cutoff
 
+   select type(screen)
+   class is (distance_screening)
+      screen%thresh = self%cutoff*self%cutoff
+   end select
+
    self%complete = complete_def
    if (present(complete)) self%complete = complete
 
@@ -201,10 +219,10 @@ subroutine new_csr_list(self, mol, error, wsc, cutoff, trans, complete)
 
    if (any(mol%periodic) .and. present(wsc)) then
       ! Generate the neighborlist and wsc type objects simultaneously
-      call build_list(self, mol, error, wsc)
+      call build_list(self, screen, mol, error, wsc)
    else
       ! Generate the CSR neighbor list for molecular or periodic systems
-      call build_list(self, mol, error)
+      call build_list(self, screen, mol, error)
    end if
 
 end subroutine new_csr_list
@@ -233,8 +251,9 @@ subroutine new_csr_list_legacy(self, mol, wsc, cutoff, trans, complete)
    logical, intent(in), optional :: complete
 
    type(error_type), allocatable :: error
+   type(distance_screening) :: screen
 
-   call new_csr_list(self, mol, error, wsc, cutoff, trans, complete)
+   call new_csr_list(self, screen, mol, error, wsc, cutoff, trans, complete)
    if (allocated(error)) then
       write(error_unit, "(a)") error%message
       error stop
@@ -243,10 +262,13 @@ subroutine new_csr_list_legacy(self, mol, wsc, cutoff, trans, complete)
 end subroutine new_csr_list_legacy
 
 !> Build the CSR neighbor list for a structure
-subroutine build_list(self, mol, error, wsc)
+subroutine build_list(self, screen, mol, error, wsc)
 
    !> Instance of the neighborlist
    type(csr_list), intent(inout) :: self
+
+   !> Screening instance
+   class(screening_type), intent(in) :: screen
 
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
@@ -334,8 +356,8 @@ subroutine build_list(self, mol, error, wsc)
    allocate(cnt(nat), source=0)
    allocate(icnt(nat), source=0)
    if (use_wsc) allocate(tridx(nat + 1), source=1_i8)
-   call neighbor_pass(self, grid, .false., cnt, icnt, nself, self_tridx, &
-      & nimg_max, error, tridx, wsc)
+   call neighbor_pass(self, screen, grid, .false., tridx, cnt, icnt, nself, self_tridx, &
+      & nimg_max, wsc, error)
    if (allocated(error)) return
 
    ! 6. CSR pointer array filling
@@ -364,8 +386,8 @@ subroutine build_list(self, mol, error, wsc)
    end if
 
    ! 8. Filling pass
-   call neighbor_pass(self, grid, .true., cnt, icnt, nself, self_tridx, &
-      & nimg_max, error, tridx, wsc)
+   call neighbor_pass(self, screen, grid, .true., tridx, cnt, icnt, nself, self_tridx, &
+      & nimg_max, wsc, error)
    if (allocated(error)) return
 
    if (use_wsc) then
@@ -376,11 +398,14 @@ subroutine build_list(self, mol, error, wsc)
 end subroutine build_list
 
 !> Counting and filling pass over all cell pairs
-subroutine neighbor_pass(self, grid, lstore, cnt, icnt, nself, &
-   & self_tridx, nimg_max, error, tridx, wsc)
+subroutine neighbor_pass(self, screen, grid, lstore, tridx, cnt, icnt, nself, &
+   & self_tridx, nimg_max, wsc, error)
 
    !> Instance of the neighborlist, filled if lstore is set
    type(csr_list), intent(inout) :: self
+
+   !> Screening instance
+   class(screening_type), intent(in) :: screen
 
    !> Cell-sorted linked cell grid
    type(grid_type), intent(in) :: grid
@@ -417,14 +442,13 @@ subroutine neighbor_pass(self, grid, lstore, cnt, icnt, nself, &
    integer :: checkat, checkatst, checkatfin, tr, trst, trfin
    integer :: iat, jmin, nn, nimgs, nimg_count
    integer(i8) :: pos, itp
-   real(wp) :: cutoff2, xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, r2_min, vec(3)
-   logical :: use_wsc, lnltr, complete
+   real(wp) :: xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, r2_min, vec(3)
+   logical :: use_wsc, lnltr, complete, include
    real(wp), allocatable :: trans(:,:)
 
    integer, allocatable :: jcl(:), itrl(:), tridx_arr(:)
 
    nsten = size(grid%off, 2)
-   cutoff2 = self%cutoff**2
    complete = self%complete
    use_wsc = present(wsc)
    allocate(trans, source=self%trans)
@@ -438,9 +462,9 @@ subroutine neighbor_pass(self, grid, lstore, cnt, icnt, nself, &
    !$omp& private(checkat, checkatst, checkatfin, tr, trst, trfin) &
    !$omp& private(iat, jmin, nn, nimgs, nimg_count, tridx_arr, pos, itp) &
    !$omp& private(xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, r2_min, vec) &
-   !$omp& private(jcl, itrl) &
+   !$omp& private(jcl, itrl, include) &
    !$omp& shared(grid, error, self, lstore, tridx, cnt, icnt, nself, self_tridx) &
-   !$omp& shared(nimg_max, wsc, cutoff2, complete, use_wsc, lnltr) &
+   !$omp& shared(nimg_max, wsc, screen, complete, use_wsc, lnltr) &
    !$omp& shared(nsten, ntr, trans) &
    !$omp& reduction(max: nmax)
    ! An image list with one entry per translation holds all images of a pair
@@ -516,7 +540,9 @@ subroutine neighbor_pass(self, grid, lstore, cnt, icnt, nself, &
                   vec(2) = yi - grid%y(checkat)
                   vec(3) = zi - grid%z(checkat)
                   call find_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
-                  if (nimg_count <= 0 .or. r2_min > cutoff2) cycle
+                  if (nimg_count <= 0) cycle
+                  call screen%check_pair(iat, grid%cellatidx(checkat), r2_min, include)
+                  if (.not. include) cycle
                   nn = nn + 1
                   nmax = max(nmax, nimg_count)
                   if (lstore) then
@@ -554,7 +580,10 @@ subroutine neighbor_pass(self, grid, lstore, cnt, icnt, nself, &
                   dy = yit - grid%y(checkat)
                   dz = zit - grid%z(checkat)
                   r2 = dx*dx + dy*dy + dz*dz
-                  if (r2 > cutoff2 .or. r2 < epsilon(0.0_wp)) cycle
+                  ! The atom itself is already stored as the diagonal entry
+                  if (r2 < epsilon(0.0_wp)) cycle
+                  call screen%check_pair(iat, grid%cellatidx(checkat), r2, include)
+                  if (.not. include) cycle
                   nn = nn + 1
                   if (lstore) then
                      self%nlat(pos + nn) = grid%cellatidx(checkat)
@@ -591,6 +620,28 @@ subroutine neighbor_pass(self, grid, lstore, cnt, icnt, nself, &
    nimg_max = max(nimg_max, nmax)
 
 end subroutine neighbor_pass
+
+!> Include a pair of atoms if it lies within the cutoff radius
+subroutine check_pair_distance(self, iatom, jatom, r2, include)
+
+   !> Distance screening type instance
+   class(distance_screening), intent(in) :: self
+
+   !> Index of the first atom
+   integer, intent(in) :: iatom
+
+   !> Index of the second atom
+   integer, intent(in) :: jatom
+
+   !> Squared distance between the two atoms
+   real(wp), intent(in) :: r2
+
+   !> Return true if the pair should be included
+   logical, intent(out) :: include
+
+   include = r2 <= self%thresh
+
+end subroutine check_pair_distance
 
 !> Resolve the stencil around one cell into the list of cells to scan
 pure subroutine resolve_stencil(grid, ic, jcl, itrl, ns)
