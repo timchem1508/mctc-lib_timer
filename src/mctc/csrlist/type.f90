@@ -307,7 +307,7 @@ subroutine build_list(self, screen, mol, error, wsc)
    allocate(icnt(nat), source=0)
    if (use_wsc) allocate(tridx(nat + 1), source=1_i8)
    call neighbor_pass(self, screen, grid, .false., tridx, cnt, icnt, nself, self_tridx, &
-      & nimg_max, wsc, error)
+      & r2_min, nimg_max, wsc, error)
 
    ! 6. CSR pointer array filling
    nimgs = 0_i8
@@ -336,7 +336,7 @@ subroutine build_list(self, screen, mol, error, wsc)
 
    ! 8. Filling pass
    call neighbor_pass(self, screen, grid, .true., tridx, cnt, icnt, nself, self_tridx, &
-      & nimg_max, wsc, error)
+      & r2_min, nimg_max, wsc, error)
 
    if (use_wsc) then
       wsc%nimg_max = nimg_max
@@ -347,7 +347,7 @@ end subroutine build_list
 
 !> Counting and filling pass over all cell pairs
 subroutine neighbor_pass(self, screen, grid, lstore, tridx, cnt, icnt, nself, &
-   & self_tridx, nimg_max, wsc, error)
+   & self_tridx, r2_min_self, nimg_max, wsc, error)
 
    !> Instance of the neighborlist, filled if lstore is set
    type(csr_list), intent(inout) :: self
@@ -375,6 +375,9 @@ subroutine neighbor_pass(self, screen, grid, lstore, tridx, cnt, icnt, nself, &
 
    !> Image indices of the diagonal entry
    integer, intent(in) :: self_tridx(:)
+
+   !> Minimum squared distance for the diagonal entry
+   real(wp), intent(in) :: r2_min_self
 
    !> Largest number of images found for a single pair
    integer, intent(inout) :: nimg_max
@@ -413,7 +416,7 @@ subroutine neighbor_pass(self, screen, grid, lstore, tridx, cnt, icnt, nself, &
    !$omp& private(jcl, itrl, include) &
    !$omp& shared(grid, error, self, lstore, tridx, cnt, icnt, nself, self_tridx) &
    !$omp& shared(nimg_max, wsc, screen, complete, use_wsc, lnltr) &
-   !$omp& shared(nsten, ntr, trans) &
+   !$omp& shared(nsten, ntr, trans, r2_min) &
    !$omp& reduction(max: nmax)
    allocate(jcl(nsten), itrl(nsten))
 
@@ -455,9 +458,10 @@ subroutine neighbor_pass(self, screen, grid, lstore, tridx, cnt, icnt, nself, &
             if (lnltr) self%nltr(pos) = 1
             if (use_wsc) then
                itp = tridx(iat)
+               call screen%check_pair(iat, iat, r2_min, include)
                wsc%nimg_list(pos) = nself
                wsc%itr_list(pos) = int(itp)
-               if (nself > 0) then
+               if (nself > 0 .and. include) then
                   wsc%tridx_list(itp:itp + nself - 1) = self_tridx(1:nself)
                   itp = itp + nself
                end if
