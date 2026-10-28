@@ -19,6 +19,7 @@
 !> Abstract screening deciding which atom pairs enter the neighbor list
 module mctc_csrlist_screening
    use mctc_env, only : wp
+   use mctc_io, only : structure_type
    implicit none
    private
 
@@ -36,11 +37,14 @@ module mctc_csrlist_screening
 
    abstract interface
       !> Check if a pair of atoms should be included in the neighbor list.
-      subroutine check_pair(self, iatom, jatom, r2, include)
-         import :: screening_type, wp
+      subroutine check_pair(self, mol, iatom, jatom, r2, include)
+         import :: screening_type, wp, structure_type
 
          !> Screening instance
          class(screening_type), intent(in) :: self
+
+         !> Structure type
+         type(structure_type), intent(in) :: mol
 
          !> Index of the first atom
          integer, intent(in) :: iatom
