@@ -356,7 +356,7 @@ subroutine build_list(self, screen, mol, error, wsc)
    allocate(cnt(nat), source=0)
    allocate(icnt(nat), source=0)
    if (use_wsc) allocate(tridx(nat + 1), source=1_i8)
-   call neighbor_pass(self, screen, grid, .false., tridx, cnt, icnt, nself, self_tridx, &
+   call neighbor_pass(self, screen, mol, grid, .false., tridx, cnt, icnt, nself, self_tridx, &
       & r2_min, nimg_max, wsc, error)
    if (allocated(error)) return
 
@@ -386,7 +386,7 @@ subroutine build_list(self, screen, mol, error, wsc)
    end if
 
    ! 8. Filling pass
-   call neighbor_pass(self, screen, grid, .true., tridx, cnt, icnt, nself, self_tridx, &
+   call neighbor_pass(self, screen, mol, grid, .true., tridx, cnt, icnt, nself, self_tridx, &
       & r2_min, nimg_max, wsc, error)
    if (allocated(error)) return
 
@@ -398,7 +398,7 @@ subroutine build_list(self, screen, mol, error, wsc)
 end subroutine build_list
 
 !> Counting and filling pass over all cell pairs
-subroutine neighbor_pass(self, screen, grid, lstore, tridx, cnt, icnt, nself, &
+subroutine neighbor_pass(self, screen, mol, grid, lstore, tridx, cnt, icnt, nself, &
    & self_tridx, r2_min_self, nimg_max, wsc, error)
 
    !> Instance of the neighborlist, filled if lstore is set
@@ -406,6 +406,9 @@ subroutine neighbor_pass(self, screen, grid, lstore, tridx, cnt, icnt, nself, &
 
    !> Screening instance
    class(screening_type), intent(in) :: screen
+
+   !> Structure type
+   type(structure_type), intent(in) :: mol
 
    !> Cell-sorted linked cell grid
    type(grid_type), intent(in) :: grid
@@ -464,11 +467,11 @@ subroutine neighbor_pass(self, screen, grid, lstore, tridx, cnt, icnt, nself, &
    !$omp& private(ic, shift, ns, jc, lcatidx, lcatidxst, lcatidxfin) &
    !$omp& private(checkat, checkatst, checkatfin, tr, trst, trfin) &
    !$omp& private(iat, jmin, nn, nimgs, nimg_count, tridx_arr, pos, itp) &
-   !$omp& private(xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, r2_min, vec) &
+   !$omp& private(xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, vec) &
    !$omp& private(jcl, itrl, include) &
    !$omp& shared(grid, error, self, lstore, tridx, cnt, icnt, nself, self_tridx) &
    !$omp& shared(nimg_max, wsc, screen, complete, use_wsc, lnltr) &
-   !$omp& shared(nsten, ntr, trans, r2_min) &
+   !$omp& shared(nsten, ntr, trans, r2_min, mol) &
    !$omp& reduction(max: nmax)
    ! An image list with one entry per translation holds all images of a pair
    allocate(jcl(nsten), itrl(nsten), tridx_arr(size(trans, 2)))
@@ -511,7 +514,7 @@ subroutine neighbor_pass(self, screen, grid, lstore, tridx, cnt, icnt, nself, &
             if (lnltr) self%nltr(pos) = 1
             if (use_wsc) then
                itp = tridx(iat)
-               call screen%check_pair(iat, iat, r2_min, include)
+               call screen%check_pair(mol, iat, iat, r2_min, include)
                wsc%nimg_list(pos) = nself
                wsc%itr_list(pos) = int(itp)
                if (nself > 0 .and. include) then
@@ -545,7 +548,7 @@ subroutine neighbor_pass(self, screen, grid, lstore, tridx, cnt, icnt, nself, &
                   vec(3) = zi - grid%z(checkat)
                   call find_wsc_pairs(trans, vec, nimg_count, tridx_arr, r2_min)
                   if (nimg_count <= 0) cycle
-                  call screen%check_pair(iat, grid%cellatidx(checkat), r2_min, include)
+                  call screen%check_pair(mol, iat, grid%cellatidx(checkat), r2_min, include)
                   if (.not. include) cycle
                   nn = nn + 1
                   nmax = max(nmax, nimg_count)
@@ -586,7 +589,7 @@ subroutine neighbor_pass(self, screen, grid, lstore, tridx, cnt, icnt, nself, &
                   r2 = dx*dx + dy*dy + dz*dz
                   ! The atom itself is already stored as the diagonal entry
                   if (r2 < epsilon(0.0_wp)) cycle
-                  call screen%check_pair(iat, grid%cellatidx(checkat), r2, include)
+                  call screen%check_pair(mol, iat, grid%cellatidx(checkat), r2, include)
                   if (.not. include) cycle
                   nn = nn + 1
                   if (lstore) then
@@ -626,10 +629,13 @@ subroutine neighbor_pass(self, screen, grid, lstore, tridx, cnt, icnt, nself, &
 end subroutine neighbor_pass
 
 !> Include a pair of atoms if it lies within the cutoff radius
-subroutine check_pair_distance(self, iatom, jatom, r2, include)
+subroutine check_pair_distance(self, mol, iatom, jatom, r2, include)
 
    !> Distance screening type instance
    class(distance_screening), intent(in) :: self
+
+   !> Structure type
+   type(structure_type), intent(in) :: mol
 
    !> Index of the first atom
    integer, intent(in) :: iatom
