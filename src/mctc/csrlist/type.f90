@@ -416,10 +416,10 @@ subroutine neighbor_pass(self, screen, mol, grid, lstore, tridx, cnt, icnt, nsel
    !$omp& private(checkat, checkatst, checkatfin, tr, trst, trfin) &
    !$omp& private(iat, jmin, nn, nimgs, nimg_count, tridx_arr, pos, itp) &
    !$omp& private(xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, vec) &
-   !$omp& private(jcl, itrl, include) &
+   !$omp& private(jcl, itrl, include, r2_min) &
    !$omp& shared(grid, error, self, lstore, tridx, cnt, icnt, nself, self_tridx) &
    !$omp& shared(nimg_max, wsc, screen, complete, use_wsc, lnltr) &
-   !$omp& shared(nsten, ntr, trans, r2_min, mol) &
+   !$omp& shared(nsten, ntr, trans, mol, r2_min_self) &
    !$omp& reduction(max: nmax)
    allocate(jcl(nsten), itrl(nsten))
 
@@ -461,7 +461,7 @@ subroutine neighbor_pass(self, screen, mol, grid, lstore, tridx, cnt, icnt, nsel
             if (lnltr) self%nltr(pos) = 1
             if (use_wsc) then
                itp = tridx(iat)
-               call screen%check_pair(mol, iat, iat, r2_min, include)
+               call screen%check_pair(mol, iat, iat, r2_min_self, include)
                wsc%nimg_list(pos) = nself
                wsc%itr_list(pos) = int(itp)
                if (nself > 0 .and. include) then
