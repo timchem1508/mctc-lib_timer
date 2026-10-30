@@ -13,5 +13,6 @@
 # limitations under the License.
 
 srcs += files(
+  'atomsort.f90',
   'info.f90',
 )

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 tests = [
+  'atomsort',
   'csrlist',
   'csrlist-linal',
   'cutoff',
@@ -33,6 +34,7 @@ tests = [
   'read-turbomole',
   'read-vasp',
   'read-xyz',
+  'sortlist',
   'symbols',
   'timer',
   'utils',

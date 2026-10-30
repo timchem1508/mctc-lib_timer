@@ -16,6 +16,7 @@ set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
 
 list(
   APPEND srcs
+  "${dir}/atomsort.f90"
   "${dir}/info.f90"
 )
 

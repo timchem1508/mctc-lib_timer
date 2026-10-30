@@ -15,6 +15,7 @@
 # Unit testing
 set(
   tests
+  "atomsort"
   "csrlist"
   "csrlist-linal"
   "csrlist-screening"
@@ -36,6 +37,7 @@ set(
   "read-turbomole"
   "read-vasp"
   "read-xyz"
+  "sortlist"
   "symbols"
   "timer"
   "utils"

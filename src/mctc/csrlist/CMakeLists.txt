@@ -18,6 +18,7 @@ list(
   APPEND srcs
   "${dir}/linal.f90"
   "${dir}/screening.f90"
+  "${dir}/sortlist.f90"
   "${dir}/type.f90"
 )
 
