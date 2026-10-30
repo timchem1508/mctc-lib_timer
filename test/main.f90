@@ -18,6 +18,7 @@ program tester
    use mctc_env_system, only : get_argument
    use mctc_env_testing, only : run_testsuite, new_testsuite, testsuite_type, &
       & select_suite, run_selected
+   use test_atomsort, only : collect_atomsort
    use test_csrlist, only : collect_csrlist
    use test_csrlist_linal, only : collect_csrlist_linal
    use test_cutoff, only : collect_cutoff
@@ -38,6 +39,7 @@ program tester
    use test_read_turbomole, only : collect_read_turbomole
    use test_read_vasp, only : collect_read_vasp
    use test_read_xyz, only : collect_read_xyz
+   use test_sortlist, only : collect_sortlist
    use test_symbols, only : collect_symbols
    use test_timer, only : collect_timer
    use test_utils, only : collect_utils
@@ -64,8 +66,10 @@ program tester
    stat = 0
 
    testsuites = [ &
+      & new_testsuite("atomsort", collect_atomsort), &
       & new_testsuite("csrlist", collect_csrlist), &
       & new_testsuite("csrlist-linal", collect_csrlist_linal), &
+      & new_testsuite("sortlist", collect_sortlist), &
       & new_testsuite("cutoff", collect_cutoff), &
       & new_testsuite("data", collect_data), &
       & new_testsuite("math", collect_math), &
