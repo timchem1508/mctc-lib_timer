@@ -123,9 +123,7 @@ subroutine sort_neighborlist(list, wsc)
 
 end subroutine sort_neighborlist
 
-!> Sort keys in descending order by a bottom-up merge sort. The rows of the
-!> neighborlist consist of runs of ascending neighbors, one for each linked
-!> cell, which the merges handle with few mispredicted branches.
+!> Sort keys in descending order by a bottom-up merge sort.
 pure subroutine sort_descending(key, work)
 
    !> Keys to sort
@@ -165,10 +163,7 @@ pure subroutine sort_descending(key, work)
 
 end subroutine sort_descending
 
-!> Position of the first neighbor of lower index in the row of an atom of a
-!> sorted neighborlist by a binary search, the end of the row plus one if
-!> there is none. The entries before it, the atom itself and its neighbors
-!> of not lower index, form the upper triangle of the row.
+!> Position of the first neighbor of lower index
 pure function find_lower_start(list, iat) result(kat)
 
    !> Sorted neighborlist
@@ -180,17 +175,8 @@ pure function find_lower_start(list, iat) result(kat)
    !> Position of the first neighbor of lower index
    integer(i8) :: kat
 
-   integer(i8) :: hi, mid
-
-   kat = list%inl(iat) + 1
-   hi = list%inl(iat + 1) - 1
-   do while (kat <= hi)
-      mid = (kat + hi) / 2
-      if (list%nlat(mid) < iat) then
-         hi = mid - 1
-      else
-         kat = mid + 1
-      end if
+   do kat = list%inl(iat) + 1, list%inl(iat + 1) - 1
+      if (list%nlat(kat) < iat) exit
    end do
 
 end function find_lower_start
