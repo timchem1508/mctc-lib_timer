@@ -14,7 +14,7 @@
 
 module test_ncoord
    use mctc_csrlist, only : csr_list, new_csr_list, distance_screening, &
-      & sort_neighborlist, find_lower_start
+      & sort_neighborlist
    use mctc_cutoff, only : get_lattice_points
    use mctc_data_covrad, only : get_covalent_rad
    use mctc_data_paulingen, only : get_pauling_en
@@ -481,7 +481,8 @@ contains
 
    end subroutine test_derivs_list_gen
 
-   !> Compare the list based CN Hessian against the dense evaluation
+   !> Compare the CN Hessian on the upper triangle of a sorted complete list
+   !> against the dense evaluation
    subroutine test_hessian_list_gen(error, mol, ncoord)
 
       !> Error handling
@@ -493,11 +494,10 @@ contains
       !> Coordination number type
       class(ncoord_type), intent(in) :: ncoord
 
-      integer :: iat, ii, jj
-      integer(i8) :: hat, hoff
+      integer :: iat, ii, jj, nlow
+      integer(i8) :: hat, nfin
       type(csr_list) :: list
       type(distance_screening) :: screen
-      integer(i8), allocatable :: hinl(:)
       real(wp), allocatable :: dEdcn(:), hessian(:, :), hessl(:, :), lattr(:, :)
       real(wp), allocatable :: hesslist(:, :, :)
 
@@ -513,28 +513,22 @@ contains
       hessian(:, :) = 0.0_wp
       call ncoord%add_coordination_number_hessian(mol, lattr, dEdcn, hessian)
 
-      call new_csr_list(list, screen, mol, error, cutoff=ncoord%cutoff, complete=.false.)
+      call new_csr_list(list, screen, mol, error, cutoff=ncoord%cutoff, complete=.true.)
       if (allocated(error)) return
-
-      hessl(:, :) = 0.0_wp
-      call ncoord%add_coordination_number_hessian_list(mol, lattr, dEdcn, &
-         & hessl, list)
-
-      if (any(abs(hessl - hessian) > thr*max(1.0_wp, maxval(abs(hessian))))) then
-         call test_failed(error, "CN Hessian from the "// &
-            & "upper-triangular list does not match")
-         print "(a,es21.14)", "Max Hessian deviation: ", maxval(abs(hessl - hessian))
-         return
-      end if
+      call sort_neighborlist(list)
 
       allocate(hesslist(3, 3, size(list%nlat)), source=0.0_wp)
-      call ncoord%add_coordination_number_hessian_list(mol, lattr, dEdcn, &
-         & list=list, hesslist=hesslist)
+      call ncoord%add_coordination_number_hessian_list(mol, lattr, dEdcn, list, &
+         & hesslist)
 
+      ! The upper triangle of the row of i holds the blocks of the atoms j >= i
       hessl(:, :) = 0.0_wp
       do iat = 1, mol%nat
          ii = 3*(iat - 1)
-         do hat = list%inl(iat), list%inl(iat + 1) - 1
+         nfin = list%inl(iat + 1) - 1
+         nlow = findloc(list%nlat(list%inl(iat) + 1:nfin) < iat, .true., dim=1)
+         if (nlow > 0) nfin = list%inl(iat) + nlow - 1
+         do hat = list%inl(iat), nfin
             jj = 3*(list%nlat(hat) - 1)
             hessl(jj+1:jj+3, ii+1:ii+3) = hessl(jj+1:jj+3, ii+1:ii+3) &
                & + hesslist(:, :, hat)
@@ -543,53 +537,6 @@ contains
                & + transpose(hesslist(:, :, hat))
          end do
       end do
-      deallocate(hesslist)
-
-      if (any(abs(hessl - hessian) > thr*max(1.0_wp, maxval(abs(hessian))))) then
-         call test_failed(error, "Compressed CN Hessian from the "// &
-            & "upper-triangular list does not match")
-         print "(a,es21.14)", "Max Hessian deviation: ", maxval(abs(hessl - hessian))
-         return
-      end if
-
-      call new_csr_list(list, screen, mol, error, cutoff=ncoord%cutoff, complete=.true.)
-      if (allocated(error)) return
-
-      hessl(:, :) = 0.0_wp
-      call ncoord%add_coordination_number_hessian_list(mol, lattr, dEdcn, &
-         & hessl, list)
-
-      if (any(abs(hessl - hessian) > thr*max(1.0_wp, maxval(abs(hessian))))) then
-         call test_failed(error, "CN Hessian from the "// &
-            & "complete list does not match")
-         print "(a,es21.14)", "Max Hessian deviation: ", maxval(abs(hessl - hessian))
-         return
-      end if
-
-      call sort_neighborlist(list)
-      allocate(hinl(mol%nat + 1))
-      hinl(1) = 1_i8
-      do iat = 1, mol%nat
-         hinl(iat + 1) = hinl(iat) + find_lower_start(list, iat) - list%inl(iat)
-      end do
-      allocate(hesslist(3, 3, hinl(mol%nat + 1) - 1), source=0.0_wp)
-      call ncoord%add_coordination_number_hessian_list(mol, lattr, dEdcn, &
-         & list=list, hesslist=hesslist, hinl=hinl)
-
-      hessl(:, :) = 0.0_wp
-      do iat = 1, mol%nat
-         ii = 3*(iat - 1)
-         hoff = list%inl(iat) - hinl(iat)
-         do hat = hinl(iat), hinl(iat + 1) - 1
-            jj = 3*(list%nlat(hat + hoff) - 1)
-            hessl(jj+1:jj+3, ii+1:ii+3) = hessl(jj+1:jj+3, ii+1:ii+3) &
-               & + hesslist(:, :, hat)
-            if (jj == ii) cycle
-            hessl(ii+1:ii+3, jj+1:jj+3) = hessl(ii+1:ii+3, jj+1:jj+3) &
-               & + transpose(hesslist(:, :, hat))
-         end do
-      end do
-      deallocate(hesslist, hinl)
 
       if (any(abs(hessl - hessian) > thr*max(1.0_wp, maxval(abs(hessian))))) then
          call test_failed(error, "Compressed CN Hessian from the "// &
