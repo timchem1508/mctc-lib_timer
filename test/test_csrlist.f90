@@ -14,8 +14,8 @@
 
 !> Unit tests for compressed sparse row neighbor lists
 module test_csrlist
-   use mctc_csrlist, only : csr_list, new_csr_list, compute_grid, &
-      & get_linked_cell, grid_type, distance_screening
+   use mctc_csrlist, only : csr_list, new_csr_list, compute_grid, grid_type, &
+      & distance_screening
    use mctc_cutoff, only : get_lattice_points, wrap_to_central_cell
    use mctc_env, only : wp, i8, timer_type, format_time
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, &

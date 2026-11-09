@@ -15,7 +15,7 @@
 !> Declaration of base class for coordination number evaluations
 module mctc_ncoord_type
    use, intrinsic :: iso_fortran_env, only : error_unit
-   use mctc_csrlist, only : csr_list, find_lower_start
+   use mctc_csrlist, only : csr_list
    use mctc_cutoff, only : get_lattice_points
    use mctc_env, only : error_type, wp, i8
    use mctc_io, only : structure_type
@@ -908,7 +908,7 @@ contains
    !> coordination numbers using the CSR-based neighbour list,
    !> including the smooth CN cutoff if enabled.
    subroutine add_coordination_number_hessian_list(self, mol, trans, dEdcn, &
-      & hessian, list, hesslist, hlist, hinl)
+      & list, hesslist)
 
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -922,88 +922,33 @@ contains
       !> Derivative of expression with respect to the coordination number
       real(wp), intent(in) :: dEdcn(:)
 
-      !> Cartesian Hessian in flattened (3*nat, 3*nat) representation
-      real(wp), intent(inout), optional :: hessian(:, :)
-
-      !> CSR list for neighbourlist-based CN evaluation
+      !> Sorted CSR neighborlist
       type(csr_list), intent(in), target :: list
 
-      !> Cartesian Hessian blocks (3, 3, :) in the half storage of hlist
-      real(wp), intent(inout), optional :: hesslist(:, :, :)
-
-      !> Sorted complete or half neighbour list of the compressed Hessian
-      type(csr_list), intent(in), target, optional :: hlist
-
-      !> Upper-triangle row offsets of hlist in hesslist
-      integer(i8), intent(in), target, optional :: hinl(:)
+      !> Half-list Cartesian Hessian blocks (3, 3, :)
+      real(wp), intent(inout) :: hesslist(:, :, :)
 
       integer :: iat, jat, izp, jzp, itr, itrst, itrfin
-      integer(i8) :: kat, hat, hoff
-      integer :: ic, jc, ii, jj
-      logical :: trlist, half
+      integer(i8) :: kat, hat, nfin
+      integer :: ic, jc
+      logical :: trlist
       real(wp) :: r2, r1, rij(3), cutoff2, den, dEdcnij
       real(wp) :: countd, countd2, box(3, 3), pair_box(3, 3)
       real(wp) :: idamp, jdamp
-      type(csr_list), pointer :: hlist_ptr => null()
-      integer(i8), pointer :: hinl_ptr(:) => null()
-      integer(i8), allocatable, target :: hinl_local(:)
-      integer(i8), allocatable :: hmap(:)
       real(wp), allocatable :: cn(:), lattr(:, :)
-      real(wp), allocatable :: dcndr(:, :, :), dcndL(:, :, :), dcndrlist(:, :)
+      real(wp), allocatable :: dcndL(:, :, :), dcndrlist(:, :)
       real(wp), allocatable :: diagonal(:, :, :)
-
-      if (.not. present(hessian) .and. .not. present(hesslist)) return
 
       cutoff2 = self%cutoff**2
       trlist = allocated(list%nltr)
-      half = .not. list%complete
-
-      if (present(hesslist)) then
-         if (present(hlist)) then
-            hlist_ptr => hlist
-         else
-            hlist_ptr => list
-         end if
-         if (present(hinl)) then
-            hinl_ptr => hinl
-         else if (.not. hlist_ptr%complete) then
-            hinl_ptr => hlist_ptr%inl
-         else
-            allocate(hinl_local(mol%nat + 1))
-            hinl_local(1) = 1_i8
-            do iat = 1, mol%nat
-               hinl_local(iat + 1) = hinl_local(iat) &
-                  & + find_lower_start(hlist_ptr, iat) - hlist_ptr%inl(iat)
-            end do
-            hinl_ptr => hinl_local
-         end if
-      end if
 
       if (self%cut > 0.0_wp) then
-         allocate(cn(mol%nat), dcndr(3, mol%nat, mol%nat), &
-            & dcndL(3, 3, mol%nat), dcndrlist(3, size(list%nlat)))
+         allocate(cn(mol%nat), dcndL(3, 3, mol%nat), &
+            & dcndrlist(3, size(list%nlat)))
          call ncoord_d_list(self, mol, trans, cn, dcndrlist, dcndL, list)
-
-         ! Sum all images of each atom before forming the CN gradient outer product.
-         dcndr(:, :, :) = 0.0_wp
-         do iat = 1, mol%nat
-            do kat = list%inl(iat), list%inl(iat + 1) - 1
-               jat = list%nlat(kat)
-               dcndr(:, iat, jat) = dcndr(:, iat, jat) + dcndrlist(:, kat)
-               if (half .and. iat /= jat) then
-                  dcndr(:, jat, iat) = dcndr(:, jat, iat) &
-                     & - self%directed_factor*dcndrlist(:, kat)
-               end if
-            end do
-         end do
-         if (present(hessian)) then
-            call add_cn_cut_hessian(self%cut, cn, dcndr, dEdcn, hessian)
-         end if
-         if (present(hesslist)) then
-            call add_cn_cut_hessian_list(self%cut, cn, dcndr, dEdcn, hesslist, &
-               & hlist_ptr, hinl_ptr)
-         end if
-         deallocate(dcndr, dcndL, dcndrlist)
+         call add_cn_cut_hessian_list(self%cut, cn, dcndrlist, &
+            & self%directed_factor, dEdcn, hesslist, list)
+         deallocate(dcndL, dcndrlist)
       end if
 
       if (trlist) then
@@ -1014,31 +959,23 @@ contains
 
       allocate(diagonal(3, 3, mol%nat), source=0.0_wp)
 
-      !$omp parallel default(none) &
-      !$omp shared(self, mol, lattr, cn, cutoff2, dEdcn, hessian, list, trlist) &
-      !$omp shared(hesslist, hlist_ptr, hinl_ptr) &
-      !$omp private(iat, jat, kat, hat, hoff, izp, jzp, itr, itrst, itrfin, &
-      !$omp& ic, jc, ii, jj, r2, r1, rij, den, dEdcnij, countd, countd2, &
-      !$omp& box, pair_box, idamp, jdamp, hmap) &
+      ! Each thread owns the upper-triangle entries of row iat
+      !$omp parallel do default(none) schedule(runtime) &
+      !$omp shared(self, mol, lattr, cn, cutoff2, dEdcn, list, trlist, hesslist) &
+      !$omp private(iat, jat, kat, izp, jzp, itr, itrst, itrfin, ic, jc, &
+      !$omp& r2, r1, rij, den, dEdcnij, countd, countd2, box, pair_box, &
+      !$omp& idamp, jdamp, nfin) &
       !$omp reduction(+:diagonal)
-      if (present(hesslist)) allocate(hmap(mol%nat), source=0_i8)
-
-      !$omp do schedule(runtime)
       do iat = 1, mol%nat
          izp = mol%id(iat)
 
          idamp = 1.0_wp
          if (self%cut > 0.0_wp) idamp = dlog_cn_cut(cn(iat), self%cut)
 
-         hoff = 0_i8
-         if (present(hesslist)) then
-            hoff = hlist_ptr%inl(iat) - hinl_ptr(iat)
-            do hat = hinl_ptr(iat + 1) - 1, hinl_ptr(iat), -1
-               hmap(hlist_ptr%nlat(hat + hoff)) = hat
-            end do
-         end if
-
-         do kat = list%inl(iat) + 1, list%inl(iat + 1) - 1
+         nfin = list%inl(iat + 1) - 1
+         nfin = findloc(list%nlat(list%inl(iat) + 1:nfin) < iat, .true., dim=1)
+         if (nfin > 0) nfin = list%inl(iat) + nfin - 1
+         do kat = list%inl(iat) + 1, nfin
             jat = list%nlat(kat)
             ! Evaluate each unordered pair once in the row of the atom of lower index;
             ! self-images move rigidly with the atom and have no Cartesian Hessian.
@@ -1081,59 +1018,19 @@ contains
 
             diagonal(:, :, iat) = diagonal(:, :, iat) + pair_box(:, :)
             diagonal(:, :, jat) = diagonal(:, :, jat) + pair_box(:, :)
-
-            if (present(hessian)) then
-               do ic = 1, 3
-                  ii = 3*(iat - 1) + ic
-                  do jc = 1, 3
-                     jj = 3*(jat - 1) + jc
-                     hessian(jj, ii) = hessian(jj, ii) - pair_box(jc, ic)
-                     hessian(ii, jj) = hessian(ii, jj) - pair_box(ic, jc)
-                  end do
-               end do
-            end if
-            if (present(hesslist)) then
-               hat = hmap(jat)
-               if (hat > 0) hesslist(:, :, hat) = hesslist(:, :, hat) - pair_box(:, :)
-            end if
+            hesslist(:, :, kat) = hesslist(:, :, kat) - pair_box(:, :)
          end do
-
-         if (present(hesslist)) then
-            do hat = hinl_ptr(iat), hinl_ptr(iat + 1) - 1
-               hmap(hlist_ptr%nlat(hat + hoff)) = 0_i8
-            end do
-         end if
       end do
-      !$omp end do
-      if (allocated(hmap)) deallocate(hmap)
-      !$omp end parallel
+      !$omp end parallel do
 
-      if (present(hessian)) then
-         !$omp parallel do default(none) schedule(static) &
-         !$omp shared(mol, hessian, diagonal) &
-         !$omp private(iat, ic, jc, ii, jj)
-         do iat = 1, mol%nat
-            do ic = 1, 3
-               ii = 3*(iat - 1) + ic
-               do jc = 1, 3
-                  jj = 3*(iat - 1) + jc
-                  hessian(ii, jj) = hessian(ii, jj) + diagonal(ic, jc, iat)
-               end do
-            end do
-         end do
-         !$omp end parallel do
-      end if
-
-      if (present(hesslist)) then
-         !$omp parallel do default(none) schedule(static) &
-         !$omp shared(mol, hesslist, hinl_ptr, diagonal) &
-         !$omp private(iat, hat)
-         do iat = 1, mol%nat
-            hat = hinl_ptr(iat)
-            hesslist(:, :, hat) = hesslist(:, :, hat) + diagonal(:, :, iat)
-         end do
-         !$omp end parallel do
-      end if
+      !$omp parallel do default(none) schedule(static) &
+      !$omp shared(mol, hesslist, list, diagonal) &
+      !$omp private(iat, hat)
+      do iat = 1, mol%nat
+         hat = list%inl(iat)
+         hesslist(:, :, hat) = hesslist(:, :, hat) + diagonal(:, :, iat)
+      end do
+      !$omp end parallel do
 
       deallocate(diagonal)
 
@@ -1180,64 +1077,144 @@ contains
       !$omp end parallel do
    end subroutine add_cn_cut_hessian
 
+   !> Add the cutoff-curvature term sum_k dE/dCN'_k f''(CN_k) G(:, k) G(:, k)^T
+   !> with the CN gradient G(x, k) = dCN_k/dr_x to the half-list Hessian blocks
+   subroutine add_cn_cut_hessian_list(cnmax, cn, dcndrlist, directed_factor, &
+      & dEdcn, hesslist, list)
 
-   !> Add the cutoff-curvature term sum_k dE/dCN'_k f''(CN_k) grad(CN_k) grad(CN_k)^T
-   !> to the compressed Hessian in the half storage of a neighbour list.
-   subroutine add_cn_cut_hessian_list(cnmax, cn, dcndr, dEdcn, hesslist, hlist, hinl)
       !> Maximum coordination number
       real(wp), intent(in) :: cnmax
-      !> Unmodified coordination numbers and Cartesian derivatives
-      real(wp), intent(in) :: cn(:), dcndr(:, :, :)
+
+      !> Coordination numbers
+      real(wp), intent(in) :: cn(:)
+
+      !> Derivative of the CN in CSR format, dCN_j/dr_i on the entry of j in row i
+      real(wp), intent(in) :: dcndrlist(:, :)
+
+      !> Sign of the mirrored CN contribution, dCN_i/dr_j = -factor dCN_j/dr_i
+      real(wp), intent(in) :: directed_factor
+
       !> Derivative with respect to the capped coordination numbers
       real(wp), intent(in) :: dEdcn(:)
-      !> Cartesian Hessian blocks (3, 3, :) in the half storage of hlist
-      real(wp), intent(inout) :: hesslist(:, :, :)
-      !> Sorted complete or half neighbour list of the compressed Hessian
-      type(csr_list), intent(in) :: hlist
-      !> Upper-triangle row offsets of hlist in hesslist
-      integer(i8), intent(in) :: hinl(:)
 
-      integer :: iat, jat, kat, ic, nat
-      integer(i8) :: hat, hoff
-      real(wp) :: factor
-      integer(i8), allocatable :: hmap(:)
-      real(wp), allocatable :: weights(:)
+      !> Half-list Cartesian Hessian blocks (3, 3, :)
+      real(wp), intent(inout) :: hesslist(:, :, :)
+
+      !> Sorted half neighbor list
+      type(csr_list), intent(in) :: list
+
+      integer :: iat, jat, jprev, kat, nat
+      integer(i8) :: hat, hend, kpos, ient
+      integer(i8), allocatable :: tinl(:), tent(:)
+      integer, allocatable :: trow(:)
+      real(wp), allocatable :: weights(:), wgrad(:, :)
 
       nat = size(cn)
       weights = dEdcn*d2log_cn_cut(cn, cnmax)
 
-      ! Each thread owns the upper-triangle blocks of row iat.
+      ! G(iat, k) of a lower neighbor k < iat is stored in the row of k
+      call get_lower_entries(list, tinl, tent, trow)
+
+      ! Each thread owns the blocks of row iat
       !$omp parallel default(none) &
-      !$omp shared(nat, dcndr, weights, hesslist, hlist, hinl) &
-      !$omp private(iat, jat, kat, ic, hat, hoff, factor, hmap)
-      allocate(hmap(nat), source=0_i8)
+      !$omp shared(nat, list, dcndrlist, directed_factor, weights, hesslist) &
+      !$omp shared(tinl, tent, trow) &
+      !$omp private(iat, jat, jprev, kat, hat, hend, kpos, ient, wgrad)
+      allocate(wgrad(3, nat), source=0.0_wp)
       !$omp do schedule(runtime)
       do iat = 1, nat
-         hoff = hlist%inl(iat) - hinl(iat)
-         do hat = hinl(iat + 1) - 1, hinl(iat), -1
-            hmap(hlist%nlat(hat + hoff)) = hat
+         ! Gather w_k G(iat, k), zero for all CNs independent of iat
+         do kpos = list%inl(iat), list%inl(iat + 1) - 1
+            kat = list%nlat(kpos)
+            wgrad(:, kat) = wgrad(:, kat) + weights(kat)*dcndrlist(:, kpos)
          end do
-         do kat = 1, nat
-            if (weights(kat) == 0.0_wp) cycle
-            do ic = 1, 3
-               factor = weights(kat)*dcndr(ic, iat, kat)
-               if (factor == 0.0_wp) cycle
-               do hat = hinl(iat), hinl(iat + 1) - 1
-                  jat = hlist%nlat(hat + hoff)
-                  if (hmap(jat) /= hat) cycle
-                  hesslist(:, ic, hat) = hesslist(:, ic, hat) &
-                     & + factor*dcndr(:, jat, kat)
-               end do
+         do ient = tinl(iat), tinl(iat + 1) - 1
+            kat = trow(ient)
+            wgrad(:, kat) = wgrad(:, kat) &
+               & - directed_factor*weights(kat)*dcndrlist(:, tent(ient))
+         end do
+
+         ! The self-images close the row, their block is the diagonal one
+         hend = list%inl(iat + 1) - 1
+         kpos = findloc(list%nlat(list%inl(iat) + 1:hend), iat, dim=1)
+         if (kpos > 0) hend = list%inl(iat) + kpos - 1
+
+         ! Contract with G(jat, k), once on the first image of each neighbor
+         jprev = 0
+         do hat = list%inl(iat), hend
+            jat = list%nlat(hat)
+            if (jat == jprev) cycle
+            jprev = jat
+            do kpos = list%inl(jat), list%inl(jat + 1) - 1
+               hesslist(:, :, hat) = hesslist(:, :, hat) &
+                  & + outerprod(dcndrlist(:, kpos), wgrad(:, list%nlat(kpos)))
+            end do
+            do ient = tinl(jat), tinl(jat + 1) - 1
+               hesslist(:, :, hat) = hesslist(:, :, hat) - directed_factor &
+                  & * outerprod(dcndrlist(:, tent(ient)), wgrad(:, trow(ient)))
             end do
          end do
-         do hat = hinl(iat), hinl(iat + 1) - 1
-            hmap(hlist%nlat(hat + hoff)) = 0_i8
+
+         do kpos = list%inl(iat), list%inl(iat + 1) - 1
+            wgrad(:, list%nlat(kpos)) = 0.0_wp
+         end do
+         do ient = tinl(iat), tinl(iat + 1) - 1
+            wgrad(:, trow(ient)) = 0.0_wp
          end do
       end do
       !$omp end do
-      deallocate(hmap)
+      deallocate(wgrad)
       !$omp end parallel
+
    end subroutine add_cn_cut_hessian_list
+
+
+   !> Collect the entries of atom j in the rows of all i < j of a half list
+   subroutine get_lower_entries(list, tinl, tent, trow)
+
+      !> Sorted half neighbor list
+      type(csr_list), intent(in) :: list
+
+      !> Offset of each atom into the lower entries
+      integer(i8), allocatable, intent(out) :: tinl(:)
+
+      !> Position of the lower entries in the neighbor list
+      integer(i8), allocatable, intent(out) :: tent(:)
+
+      !> Atom of the row holding the lower entries
+      integer, allocatable, intent(out) :: trow(:)
+
+      integer :: iat, jat, nat
+      integer(i8) :: kpos
+      integer(i8), allocatable :: next(:)
+
+      nat = size(list%inl) - 1
+      allocate(tinl(nat + 1), source=0_i8)
+      do iat = 1, nat
+         do kpos = list%inl(iat) + 1, list%inl(iat + 1) - 1
+            jat = list%nlat(kpos)
+            if (jat /= iat) tinl(jat + 1) = tinl(jat + 1) + 1_i8
+         end do
+      end do
+
+      tinl(1) = 1_i8
+      do iat = 1, nat
+         tinl(iat + 1) = tinl(iat + 1) + tinl(iat)
+      end do
+
+      allocate(tent(tinl(nat + 1) - 1), trow(tinl(nat + 1) - 1))
+      next = tinl(:nat)
+      do iat = 1, nat
+         do kpos = list%inl(iat) + 1, list%inl(iat + 1) - 1
+            jat = list%nlat(kpos)
+            if (jat == iat) cycle
+            tent(next(jat)) = kpos
+            trow(next(jat)) = iat
+            next(jat) = next(jat) + 1_i8
+         end do
+      end do
+
+   end subroutine get_lower_entries
 
 
    !> Evaluates the pairwise electronegativity factor
