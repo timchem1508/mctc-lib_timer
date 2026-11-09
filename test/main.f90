@@ -76,6 +76,7 @@ program tester
       & new_testsuite("ncoord", collect_ncoord), &
       & new_testsuite("timer", collect_timer), &
       & new_testsuite("symbols", collect_symbols), &
+      & new_testsuite("sortlist", collect_sortlist), &
       & new_testsuite("utils", collect_utils), &
       & new_testsuite("read", collect_read), &
       & new_testsuite("read-aims", collect_read_aims), &

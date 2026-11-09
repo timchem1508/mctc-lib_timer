@@ -15,7 +15,7 @@
 !> Declaration of base class for coordination number evaluations
 module mctc_ncoord_type
    use, intrinsic :: iso_fortran_env, only : error_unit
-   use mctc_csrlist, only : csr_list
+   use mctc_csrlist, only : csr_list, find_lower_start
    use mctc_cutoff, only : get_lattice_points
    use mctc_env, only : error_type, wp, i8
    use mctc_io, only : structure_type
@@ -907,7 +907,8 @@ contains
    !> Add dE/dCN contracted with the Cartesian Hessian of the
    !> coordination numbers using the CSR-based neighbour list,
    !> including the smooth CN cutoff if enabled.
-   subroutine add_coordination_number_hessian_list(self, mol, trans, dEdcn, hessian, list)
+   subroutine add_coordination_number_hessian_list(self, mol, trans, dEdcn, &
+      & hessian, list, hesslist, hlist, hinl)
 
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -922,26 +923,61 @@ contains
       real(wp), intent(in) :: dEdcn(:)
 
       !> Cartesian Hessian in flattened (3*nat, 3*nat) representation
-      real(wp), intent(inout) :: hessian(:, :)
+      real(wp), intent(inout), optional :: hessian(:, :)
 
       !> CSR list for neighbourlist-based CN evaluation
-      type(csr_list), intent(in) :: list
+      type(csr_list), intent(in), target :: list
+
+      !> Cartesian Hessian blocks (3, 3, :) in the half storage of hlist
+      real(wp), intent(inout), optional :: hesslist(:, :, :)
+
+      !> Sorted complete or half neighbour list of the compressed Hessian
+      type(csr_list), intent(in), target, optional :: hlist
+
+      !> Upper-triangle row offsets of hlist in hesslist
+      integer(i8), intent(in), target, optional :: hinl(:)
 
       integer :: iat, jat, izp, jzp, itr, itrst, itrfin
-      integer(i8) :: kat
+      integer(i8) :: kat, hat, hoff
       integer :: ic, jc, ii, jj
       logical :: trlist, half
       real(wp) :: r2, r1, rij(3), cutoff2, den, dEdcnij
       real(wp) :: countd, countd2, box(3, 3), pair_box(3, 3)
       real(wp) :: idamp, jdamp
+      type(csr_list), pointer :: hlist_ptr => null()
+      integer(i8), pointer :: hinl_ptr(:) => null()
+      integer(i8), allocatable, target :: hinl_local(:)
+      integer(i8), allocatable :: hmap(:)
       real(wp), allocatable :: cn(:), lattr(:, :)
       real(wp), allocatable :: dcndr(:, :, :), dcndL(:, :, :), dcndrlist(:, :)
+      real(wp), allocatable :: diagonal(:, :, :)
 
-      real(wp), allocatable :: diagonal_local(:, :, :)
+      if (.not. present(hessian) .and. .not. present(hesslist)) return
 
       cutoff2 = self%cutoff**2
       trlist = allocated(list%nltr)
       half = .not. list%complete
+
+      if (present(hesslist)) then
+         if (present(hlist)) then
+            hlist_ptr => hlist
+         else
+            hlist_ptr => list
+         end if
+         if (present(hinl)) then
+            hinl_ptr => hinl
+         else if (.not. hlist_ptr%complete) then
+            hinl_ptr => hlist_ptr%inl
+         else
+            allocate(hinl_local(mol%nat + 1))
+            hinl_local(1) = 1_i8
+            do iat = 1, mol%nat
+               hinl_local(iat + 1) = hinl_local(iat) &
+                  & + find_lower_start(hlist_ptr, iat) - hlist_ptr%inl(iat)
+            end do
+            hinl_ptr => hinl_local
+         end if
+      end if
 
       if (self%cut > 0.0_wp) then
          allocate(cn(mol%nat), dcndr(3, mol%nat, mol%nat), &
@@ -960,7 +996,13 @@ contains
                end if
             end do
          end do
-         call add_cn_cut_hessian(self%cut, cn, dcndr, dEdcn, hessian)
+         if (present(hessian)) then
+            call add_cn_cut_hessian(self%cut, cn, dcndr, dEdcn, hessian)
+         end if
+         if (present(hesslist)) then
+            call add_cn_cut_hessian_list(self%cut, cn, dcndr, dEdcn, hesslist, &
+               & hlist_ptr, hinl_ptr)
+         end if
          deallocate(dcndr, dcndL, dcndrlist)
       end if
 
@@ -970,12 +1012,16 @@ contains
          lattr = trans
       end if
 
+      allocate(diagonal(3, 3, mol%nat), source=0.0_wp)
+
       !$omp parallel default(none) &
-      !$omp shared(self, mol, lattr, cn, cutoff2, dEdcn, hessian, list, trlist, half) &
-      !$omp private(iat, jat, kat, izp, jzp, itr, itrst, itrfin, ic, jc, ii, jj, &
-      !$omp& r2, r1, rij, den, dEdcnij, countd, countd2, box, pair_box, &
-      !$omp& diagonal_local, idamp, jdamp)
-      allocate(diagonal_local(3, 3, mol%nat), source=0.0_wp)
+      !$omp shared(self, mol, lattr, cn, cutoff2, dEdcn, hessian, list, trlist) &
+      !$omp shared(hesslist, hlist_ptr, hinl_ptr) &
+      !$omp private(iat, jat, kat, hat, hoff, izp, jzp, itr, itrst, itrfin, &
+      !$omp& ic, jc, ii, jj, r2, r1, rij, den, dEdcnij, countd, countd2, &
+      !$omp& box, pair_box, idamp, jdamp, hmap) &
+      !$omp reduction(+:diagonal)
+      if (present(hesslist)) allocate(hmap(mol%nat), source=0_i8)
 
       !$omp do schedule(runtime)
       do iat = 1, mol%nat
@@ -984,10 +1030,19 @@ contains
          idamp = 1.0_wp
          if (self%cut > 0.0_wp) idamp = dlog_cn_cut(cn(iat), self%cut)
 
+         hoff = 0_i8
+         if (present(hesslist)) then
+            hoff = hlist_ptr%inl(iat) - hinl_ptr(iat)
+            do hat = hinl_ptr(iat + 1) - 1, hinl_ptr(iat), -1
+               hmap(hlist_ptr%nlat(hat + hoff)) = hat
+            end do
+         end if
+
          do kat = list%inl(iat) + 1, list%inl(iat + 1) - 1
             jat = list%nlat(kat)
-            ! Self-images move rigidly with the atom, no Cartesian Hessian.
-            if (iat == jat) cycle
+            ! Evaluate each unordered pair once in the row of the atom of lower index;
+            ! self-images move rigidly with the atom and have no Cartesian Hessian.
+            if (jat <= iat) cycle
             jzp = mol%id(jat)
             den = self%get_en_factor(izp, jzp)
 
@@ -1024,36 +1079,63 @@ contains
                pair_box(:, :) = pair_box(:, :) + box(:, :)
             end do
 
-            diagonal_local(:, :, iat) = diagonal_local(:, :, iat) + pair_box(:, :)
-            if (half) then
-               diagonal_local(:, :, jat) = diagonal_local(:, :, jat) + pair_box(:, :)
-            end if
+            diagonal(:, :, iat) = diagonal(:, :, iat) + pair_box(:, :)
+            diagonal(:, :, jat) = diagonal(:, :, jat) + pair_box(:, :)
 
+            if (present(hessian)) then
+               do ic = 1, 3
+                  ii = 3*(iat - 1) + ic
+                  do jc = 1, 3
+                     jj = 3*(jat - 1) + jc
+                     hessian(jj, ii) = hessian(jj, ii) - pair_box(jc, ic)
+                     hessian(ii, jj) = hessian(ii, jj) - pair_box(ic, jc)
+                  end do
+               end do
+            end if
+            if (present(hesslist)) then
+               hat = hmap(jat)
+               if (hat > 0) hesslist(:, :, hat) = hesslist(:, :, hat) - pair_box(:, :)
+            end if
+         end do
+
+         if (present(hesslist)) then
+            do hat = hinl_ptr(iat), hinl_ptr(iat + 1) - 1
+               hmap(hlist_ptr%nlat(hat + hoff)) = 0_i8
+            end do
+         end if
+      end do
+      !$omp end do
+      if (allocated(hmap)) deallocate(hmap)
+      !$omp end parallel
+
+      if (present(hessian)) then
+         !$omp parallel do default(none) schedule(static) &
+         !$omp shared(mol, hessian, diagonal) &
+         !$omp private(iat, ic, jc, ii, jj)
+         do iat = 1, mol%nat
             do ic = 1, 3
                ii = 3*(iat - 1) + ic
                do jc = 1, 3
-                  jj = 3*(jat - 1) + jc
-                  hessian(jj, ii) = hessian(jj, ii) - pair_box(jc, ic)
-                  if (half) hessian(ii, jj) = hessian(ii, jj) - pair_box(ic, jc)
+                  jj = 3*(iat - 1) + jc
+                  hessian(ii, jj) = hessian(ii, jj) + diagonal(ic, jc, iat)
                end do
             end do
          end do
-      end do
-      !$omp end do nowait
+         !$omp end parallel do
+      end if
 
-      !$omp critical (add_coordination_number_hessian_list_)
-      do iat = 1, mol%nat
-         do ic = 1, 3
-            ii = 3*(iat - 1) + ic
-            do jc = 1, 3
-               jj = 3*(iat - 1) + jc
-               hessian(ii, jj) = hessian(ii, jj) + diagonal_local(ic, jc, iat)
-            end do
+      if (present(hesslist)) then
+         !$omp parallel do default(none) schedule(static) &
+         !$omp shared(mol, hesslist, hinl_ptr, diagonal) &
+         !$omp private(iat, hat)
+         do iat = 1, mol%nat
+            hat = hinl_ptr(iat)
+            hesslist(:, :, hat) = hesslist(:, :, hat) + diagonal(:, :, iat)
          end do
-      end do
-      !$omp end critical (add_coordination_number_hessian_list_)
-      deallocate(diagonal_local)
-      !$omp end parallel
+         !$omp end parallel do
+      end if
+
+      deallocate(diagonal)
 
    end subroutine add_coordination_number_hessian_list
 
@@ -1097,6 +1179,65 @@ contains
       end do
       !$omp end parallel do
    end subroutine add_cn_cut_hessian
+
+
+   !> Add the cutoff-curvature term sum_k dE/dCN'_k f''(CN_k) grad(CN_k) grad(CN_k)^T
+   !> to the compressed Hessian in the half storage of a neighbour list.
+   subroutine add_cn_cut_hessian_list(cnmax, cn, dcndr, dEdcn, hesslist, hlist, hinl)
+      !> Maximum coordination number
+      real(wp), intent(in) :: cnmax
+      !> Unmodified coordination numbers and Cartesian derivatives
+      real(wp), intent(in) :: cn(:), dcndr(:, :, :)
+      !> Derivative with respect to the capped coordination numbers
+      real(wp), intent(in) :: dEdcn(:)
+      !> Cartesian Hessian blocks (3, 3, :) in the half storage of hlist
+      real(wp), intent(inout) :: hesslist(:, :, :)
+      !> Sorted complete or half neighbour list of the compressed Hessian
+      type(csr_list), intent(in) :: hlist
+      !> Upper-triangle row offsets of hlist in hesslist
+      integer(i8), intent(in) :: hinl(:)
+
+      integer :: iat, jat, kat, ic, nat
+      integer(i8) :: hat, hoff
+      real(wp) :: factor
+      integer(i8), allocatable :: hmap(:)
+      real(wp), allocatable :: weights(:)
+
+      nat = size(cn)
+      weights = dEdcn*d2log_cn_cut(cn, cnmax)
+
+      ! Each thread owns the upper-triangle blocks of row iat.
+      !$omp parallel default(none) &
+      !$omp shared(nat, dcndr, weights, hesslist, hlist, hinl) &
+      !$omp private(iat, jat, kat, ic, hat, hoff, factor, hmap)
+      allocate(hmap(nat), source=0_i8)
+      !$omp do schedule(runtime)
+      do iat = 1, nat
+         hoff = hlist%inl(iat) - hinl(iat)
+         do hat = hinl(iat + 1) - 1, hinl(iat), -1
+            hmap(hlist%nlat(hat + hoff)) = hat
+         end do
+         do kat = 1, nat
+            if (weights(kat) == 0.0_wp) cycle
+            do ic = 1, 3
+               factor = weights(kat)*dcndr(ic, iat, kat)
+               if (factor == 0.0_wp) cycle
+               do hat = hinl(iat), hinl(iat + 1) - 1
+                  jat = hlist%nlat(hat + hoff)
+                  if (hmap(jat) /= hat) cycle
+                  hesslist(:, ic, hat) = hesslist(:, ic, hat) &
+                     & + factor*dcndr(:, jat, kat)
+               end do
+            end do
+         end do
+         do hat = hinl(iat), hinl(iat + 1) - 1
+            hmap(hlist%nlat(hat + hoff)) = 0_i8
+         end do
+      end do
+      !$omp end do
+      deallocate(hmap)
+      !$omp end parallel
+   end subroutine add_cn_cut_hessian_list
 
 
    !> Evaluates the pairwise electronegativity factor
