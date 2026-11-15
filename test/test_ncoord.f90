@@ -125,6 +125,9 @@ contains
       & new_unittest("dcndr-list-nacl_erf_en", test_dcndr_list_nacl_erf_en), &
       & new_unittest("derivs-list-x05_erf-cut", test_derivs_list_x05_erf_cut), &
       & new_unittest("hessian-list-feo2_dexp", test_hessian_list_feo2_dexp), &
+      & new_unittest("hessian-feo2_dexp", test_hessian_feo2_dexp), &
+      & new_unittest("hessian-nacl_erf_en", test_hessian_nacl_erf_en), &
+      & new_unittest("hessian-x05_erf-cut", test_hessian_x05_erf_cut), &
       & new_unittest("cn_unknown", test_cn_unknown, should_fail=.true.), &
       & new_unittest("cn_count_string_to_id", test_cn_count_string_to_id), &
       & new_unittest("cn_count_id_to_string", test_cn_count_id_to_string) &
@@ -220,10 +223,12 @@ contains
       !> Coordination number type
       class(ncoord_type), intent(in) :: ncoord
 
-      integer :: iat, ic, ii
+      integer :: iat, ic, id, ii
       real(wp), allocatable :: dEdcn(:), gradient(:, :), gr(:, :), gl(:, :)
       real(wp), allocatable :: hessian(:, :), numhessian(:, :), lattr(:, :)
-      real(wp) :: sigma(3, 3)
+      real(wp) :: sigma(3, 3), sigma_r(3, 3), sigma_l(3, 3), eps(3, 3)
+      real(wp) :: elst(3, 3, 3, 3), numelst(3, 3, 3, 3)
+      type(structure_type) :: displaced
       real(wp), parameter :: step = 1.0e-5_wp
       real(wp), parameter :: hthr = 100.0_wp*thr2
 
@@ -240,8 +245,10 @@ contains
 
       ! The routine must add to, rather than overwrite, the caller's Hessian.
       hessian(:, :) = 0.125_wp
-      call ncoord%add_coordination_number_hessian(mol, lattr, dEdcn, hessian)
+      elst(:, :, :, :) = 0.125_wp
+      call ncoord%add_coordination_number_hessian(mol, lattr, dEdcn, hessian, elst)
       hessian(:, :) = hessian - 0.125_wp
+      elst(:, :, :, :) = elst - 0.125_wp
 
       do iat = 1, mol%nat
          do ic = 1, 3
@@ -262,6 +269,39 @@ contains
             numhessian(:, ii) = reshape(0.5_wp*(gr - gl)/step, [3*mol%nat])
          end do
       end do
+
+      ! Strain Hessian from the virial of deformed structures
+      displaced = mol
+      do id = 1, 3
+         do ic = 1, 3
+            eps(:, :) = 0.0_wp
+            do ii = 1, 3
+               eps(ii, ii) = 1.0_wp
+            end do
+            eps(ic, id) = eps(ic, id) + step
+            displaced%xyz(:, :) = matmul(eps, mol%xyz)
+            displaced%lattice(:, :) = matmul(eps, mol%lattice)
+            gradient(:, :) = 0.0_wp
+            sigma_r(:, :) = 0.0_wp
+            call ncoord%add_coordination_number_derivs(displaced, matmul(eps, lattr), &
+               & dEdcn, gradient, sigma_r)
+
+            eps(ic, id) = eps(ic, id) - 2.0_wp*step
+            displaced%xyz(:, :) = matmul(eps, mol%xyz)
+            displaced%lattice(:, :) = matmul(eps, mol%lattice)
+            gradient(:, :) = 0.0_wp
+            sigma_l(:, :) = 0.0_wp
+            call ncoord%add_coordination_number_derivs(displaced, matmul(eps, lattr), &
+               & dEdcn, gradient, sigma_l)
+            numelst(:, :, ic, id) = 0.5_wp*(sigma_r - sigma_l)/step
+         end do
+      end do
+
+      if (maxval(abs(elst - numelst)) > hthr) then
+         call test_failed(error, "Coordination number strain Hessian does not match numerical derivative")
+         print "(a,es21.14)", "Max strain Hessian deviation: ", maxval(abs(elst - numelst))
+         return
+      end if
 
       if (maxval(abs(hessian - numhessian)) > hthr) then
          call test_failed(error, "Coordination number Hessian does not match numerical derivative")
@@ -500,7 +540,9 @@ contains
       type(distance_screening) :: screen
       real(wp), allocatable :: dEdcn(:), hessian(:, :), hessl(:, :), lattr(:, :)
       real(wp), allocatable :: hesslist(:, :, :)
+      real(wp) :: elst(3, 3, 3, 3)
 
+      elst(:, :, :, :) = 0.0_wp
       allocate(dEdcn(mol%nat), hessian(3*mol%nat, 3*mol%nat), &
          & hessl(3*mol%nat, 3*mol%nat))
       do iat = 1, mol%nat
@@ -511,7 +553,7 @@ contains
       if (allocated(error)) return
 
       hessian(:, :) = 0.0_wp
-      call ncoord%add_coordination_number_hessian(mol, lattr, dEdcn, hessian)
+      call ncoord%add_coordination_number_hessian(mol, lattr, dEdcn, hessian, elst)
 
       call new_csr_list(list, screen, mol, error, cutoff=ncoord%cutoff, complete=.true.)
       if (allocated(error)) return
@@ -2606,6 +2648,51 @@ contains
       call test_hessian_list_gen(error, mol, ncoord)
 
    end subroutine test_hessian_list_feo2_dexp
+
+
+   subroutine test_hessian_feo2_dexp(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      type(dexp_ncoord_type) :: ncoord
+
+      call get_structure(mol, "feo2")
+      call new_dexp_ncoord(ncoord, mol, cutoff=30.0_wp)
+      call test_numhessian(error, mol, ncoord)
+
+   end subroutine test_hessian_feo2_dexp
+
+
+   subroutine test_hessian_nacl_erf_en(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      type(erf_en_ncoord_type) :: ncoord
+
+      call get_structure(mol, "nacl")
+      call new_erf_en_ncoord(ncoord, mol, cutoff=30.0_wp)
+      call test_numhessian(error, mol, ncoord)
+
+   end subroutine test_hessian_nacl_erf_en
+
+
+   subroutine test_hessian_x05_erf_cut(error)
+
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+
+      type(structure_type) :: mol
+      type(erf_ncoord_type) :: ncoord
+
+      call get_structure(mol, "x05")
+      call new_erf_ncoord(ncoord, mol, cutoff=30.0_wp, cut=2.5_wp)
+      call test_numhessian(error, mol, ncoord)
+
+   end subroutine test_hessian_x05_erf_cut
 
 
    subroutine test_cn_unknown(error)

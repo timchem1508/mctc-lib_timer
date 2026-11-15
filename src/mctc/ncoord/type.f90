@@ -784,7 +784,7 @@ contains
 
    !> Add dE/dCN contracted with the Cartesian Hessian of the
    !> coordination numbers, including the smooth CN cutoff if enabled.
-   subroutine add_coordination_number_hessian(self, mol, trans, dEdcn, hessian)
+   subroutine add_coordination_number_hessian(self, mol, trans, dEdcn, hessian, elst)
 
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -801,8 +801,11 @@ contains
       !> Cartesian Hessian in flattened (3*nat, 3*nat) representation
       real(wp), intent(inout) :: hessian(:, :)
 
+      !> Second derivative w.r.t. strain x -> (1 + eps) x, element (a, b, c, d) is eps_ab, eps_cd
+      real(wp), intent(inout) :: elst(:, :, :, :)
+
       integer :: ipair, npair, iat, jat, izp, jzp, itr
-      integer :: ic, jc, ii, jj
+      integer :: ic, jc, ii, jj, ia, ib
       real(wp) :: r2, r1, rij(3), cutoff2, den, dEdcnij
       real(wp) :: countd, countd2, box(3, 3), pair_box(3, 3)
       real(wp) :: idamp, jdamp
@@ -813,22 +816,25 @@ contains
       ! unordered atom pair. Keep those thread-private and write off-diagonal
       ! boxes directly from the thread owning the pair.
       real(wp), allocatable :: diagonal_local(:, :, :)
+      real(wp) :: elst_local(3, 3, 3, 3)
 
       cutoff2 = self%cutoff**2
       npair = mol%nat*(mol%nat - 1)/2
+      elst_local(:, :, :, :) = 0.0_wp
 
       if (self%cut > 0.0_wp) then
          allocate(cn(mol%nat), dcndr(3, mol%nat, mol%nat), dcndL(3, 3, mol%nat))
          call ncoord_d(self, mol, trans, cn, dcndr, dcndL)
-         call add_cn_cut_hessian(self%cut, cn, dcndr, dEdcn, hessian)
+         call add_cn_cut_hessian(self%cut, cn, dcndr, dcndL, dEdcn, hessian, elst)
          deallocate(dcndr, dcndL)
       end if
 
       !$omp parallel default(none) &
       !$omp shared(self, mol, trans, cn, cutoff2, dEdcn, hessian, npair) &
-      !$omp private(ipair, iat, jat, izp, jzp, itr, ic, jc, ii, jj, r2, r1, rij, &
-      !$omp& den, dEdcnij, countd, countd2, box, pair_box, diagonal_local, &
-      !$omp& idamp, jdamp)
+      !$omp private(ipair, iat, jat, izp, jzp, itr, ic, jc, ii, jj, ia, ib, r2, r1, &
+      !$omp& rij, den, dEdcnij, countd, countd2, box, pair_box, diagonal_local, &
+      !$omp& idamp, jdamp) &
+      !$omp reduction(+:elst_local)
       allocate(diagonal_local(3, 3, mol%nat), source=0.0_wp)
 
       !$omp do schedule(runtime)
@@ -871,6 +877,20 @@ contains
                box(ic, ic) = box(ic, ic) + dEdcnij*countd/r1
             end do
             pair_box(:, :) = pair_box(:, :) + box(:, :)
+
+            ! The pair vector is linear in the strain, f_a r_b has two strain dependent factors
+            do jc = 1, 3
+               do ic = 1, 3
+                  do ib = 1, 3
+                     do ia = 1, 3
+                        elst_local(ia, ib, ic, jc) = elst_local(ia, ib, ic, jc) &
+                           & + box(ia, ic)*rij(ib)*rij(jc)
+                     end do
+                  end do
+                  elst_local(:, ic, ic, jc) = elst_local(:, ic, ic, jc) &
+                     & + dEdcnij*countd*rij(:)*rij(jc)/r1
+               end do
+            end do
          end do
 
          diagonal_local(:, :, iat) = diagonal_local(:, :, iat) + pair_box(:, :)
@@ -882,6 +902,44 @@ contains
                jj = 3*(jat - 1) + jc
                hessian(ii, jj) = hessian(ii, jj) - pair_box(ic, jc)
                hessian(jj, ii) = hessian(jj, ii) - pair_box(jc, ic)
+            end do
+         end do
+      end do
+      !$omp end do nowait
+
+      ! Self-images move rigidly with the atom, only the strain Hessian depends on them
+      !$omp do schedule(runtime)
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         den = self%get_en_factor(izp, izp)
+         dEdcnij = dEdcn(iat)
+         if (self%cut > 0.0_wp) dEdcnij = dEdcnij*dlog_cn_cut(cn(iat), self%cut)
+         do itr = 1, size(trans, dim=2)
+            rij = -trans(:, itr)
+            r2 = sum(rij**2)
+            if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
+            r1 = sqrt(r2)
+
+            countd = den*self%ncoord_dcount(izp, izp, r1)
+            countd2 = den*self%ncoord_d2count(izp, izp, r1)
+            do ic = 1, 3
+               do ia = 1, 3
+                  box(ia, ic) = dEdcnij*(countd2 - countd/r1)*rij(ia)*rij(ic)/r2
+               end do
+               box(ic, ic) = box(ic, ic) + dEdcnij*countd/r1
+            end do
+
+            do jc = 1, 3
+               do ic = 1, 3
+                  do ib = 1, 3
+                     do ia = 1, 3
+                        elst_local(ia, ib, ic, jc) = elst_local(ia, ib, ic, jc) &
+                           & + box(ia, ic)*rij(ib)*rij(jc)
+                     end do
+                  end do
+                  elst_local(:, ic, ic, jc) = elst_local(:, ic, ic, jc) &
+                     & + dEdcnij*countd*rij(:)*rij(jc)/r1
+               end do
             end do
          end do
       end do
@@ -901,6 +959,8 @@ contains
 
       deallocate(diagonal_local)
       !$omp end parallel
+
+      elst(:, :, :, :) = elst + elst_local
 
    end subroutine add_coordination_number_hessian
 
@@ -1041,21 +1101,32 @@ contains
 
    !> Add the cutoff-curvature term sum_k dE/dCN'_k f''(CN_k) grad(CN_k) grad(CN_k)^T.
    !> The f'(CN_k) Hessian(CN_k) term is handled by the pairwise Hessian routines.
-   subroutine add_cn_cut_hessian(cnmax, cn, dcndr, dEdcn, hessian)
+   subroutine add_cn_cut_hessian(cnmax, cn, dcndr, dcndL, dEdcn, hessian, elst)
       !> Maximum coordination number
       real(wp), intent(in) :: cnmax
       !> Unmodified coordination numbers and Cartesian derivatives
-      real(wp), intent(in) :: cn(:), dcndr(:, :, :)
+      real(wp), intent(in) :: cn(:), dcndr(:, :, :), dcndL(:, :, :)
       !> Derivative with respect to the capped coordination numbers
       real(wp), intent(in) :: dEdcn(:)
       !> Cartesian Hessian in flattened (3*nat, 3*nat) representation
       real(wp), intent(inout) :: hessian(:, :)
+      !> Second derivative w.r.t. strain
+      real(wp), intent(inout) :: elst(:, :, :, :)
 
       integer :: iat, jat, kat, ic, jc, ii, jj
       real(wp) :: factor
       real(wp), allocatable :: weights(:)
 
       weights = dEdcn*d2log_cn_cut(cn, cnmax)
+
+      do kat = 1, size(cn)
+         do jc = 1, 3
+            do ic = 1, 3
+               elst(:, :, ic, jc) = elst(:, :, ic, jc) &
+                  & + weights(kat)*dcndL(:, :, kat)*dcndL(ic, jc, kat)
+            end do
+         end do
+      end do
 
       ! Each thread owns complete Hessian columns, avoiding a matrix reduction.
       !$omp parallel do collapse(2) schedule(runtime) default(none) &
