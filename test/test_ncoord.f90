@@ -223,11 +223,12 @@ contains
       !> Coordination number type
       class(ncoord_type), intent(in) :: ncoord
 
-      integer :: iat, ic, id, ii
+      integer :: iat, ia, ib, ic, id, ii
       real(wp), allocatable :: dEdcn(:), gradient(:, :), gr(:, :), gl(:, :)
       real(wp), allocatable :: hessian(:, :), numhessian(:, :), lattr(:, :)
       real(wp) :: sigma(3, 3), sigma_r(3, 3), sigma_l(3, 3), eps(3, 3)
       real(wp) :: elst(3, 3, 3, 3), numelst(3, 3, 3, 3)
+      real(wp) :: cabcd, ccdab, dev_minor, dev_major, etol
       type(structure_type) :: displaced
       real(wp), parameter :: step = 1.0e-5_wp
       real(wp), parameter :: hthr = 100.0_wp*thr2
@@ -316,6 +317,47 @@ contains
 
       if (maxval(abs(sum(hessian, dim=2))) > 1000.0_wp*epsilon(1.0_wp)) then
          call test_failed(error, "Coordination number Hessian violates translational invariance")
+         return
+      end if
+
+      ! Virial of the undeformed structure
+      gradient(:, :) = 0.0_wp
+      sigma(:, :) = 0.0_wp
+      call ncoord%add_coordination_number_derivs(mol, lattr, dEdcn, gradient, sigma)
+
+      ! The virial is symmetric for every strain, hence elst(a,b,c,d) = elst(b,a,c,d).
+      ! Deforming as (1 + d)(1 + e) X adds the virial to the mixed second derivative,
+      ! elst(a,b,c,d) = C(a,b,c,d) + delta(b,c) sigma(a,d) with C(a,b,c,d) = C(c,d,a,b).
+      etol = 1000.0_wp*epsilon(1.0_wp)*max(1.0_wp, maxval(abs(elst)), maxval(abs(sigma)))
+      dev_minor = 0.0_wp
+      dev_major = 0.0_wp
+      do id = 1, 3
+         do ic = 1, 3
+            do ib = 1, 3
+               do ia = 1, 3
+                  dev_minor = max(dev_minor, &
+                     & abs(elst(ia, ib, ic, id) - elst(ib, ia, ic, id)))
+                  cabcd = elst(ia, ib, ic, id)
+                  if (ib == ic) cabcd = cabcd - sigma(ia, id)
+                  ccdab = elst(ic, id, ia, ib)
+                  if (id == ia) ccdab = ccdab - sigma(ic, ib)
+                  dev_major = max(dev_major, abs(cabcd - ccdab))
+               end do
+            end do
+         end do
+      end do
+
+      if (dev_minor > etol) then
+         call test_failed(error, "Coordination number strain Hessian is not "// &
+            & "symmetric in the virial indices")
+         print "(a,es21.14)", "Max strain Hessian asymmetry: ", dev_minor
+         return
+      end if
+
+      if (dev_major > etol) then
+         call test_failed(error, "Coordination number strain Hessian is "// &
+            & "inconsistent with the virial")
+         print "(a,es21.14)", "Max strain Hessian asymmetry: ", dev_major
       end if
 
    end subroutine test_numhessian

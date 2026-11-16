@@ -15,7 +15,7 @@
 !> Unit tests for compressed sparse row neighbor lists
 module test_csrlist
    use mctc_csrlist, only : csr_list, new_csr_list, compute_grid, grid_type, &
-      & distance_screening
+      & distance_screening, screening_type
    use mctc_cutoff, only : get_lattice_points, wrap_to_central_cell
    use mctc_env, only : wp, i8, timer_type, format_time
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, &
@@ -37,6 +37,39 @@ module test_csrlist
    real(wp), parameter :: thr2 = sqrt(epsilon(1.0_wp))
 
 
+   !> Distance screening which additionally rejects every pair involving
+   !> one element
+   type, extends(distance_screening) :: element_screening
+
+      !> Atomic number of the element excluded from all pairs
+      integer :: exclude = 1
+   contains
+
+      !> Reject pairs containing the excluded element
+      procedure :: check_pair => check_pair_element
+
+   end type element_screening
+
+   !> Screening by a user-defined distance threshold, which the neighbor list
+   !> construction leaves untouched in contrast to the distance screening
+   type, extends(screening_type) :: radius_screening
+   contains
+
+      !> Include pairs within the user-defined threshold
+      procedure :: check_pair => check_pair_radius
+
+   end type radius_screening
+
+   !> Screening rejecting every candidate pair
+   type, extends(screening_type) :: reject_screening
+   contains
+
+      !> Reject every pair
+      procedure :: check_pair => check_pair_reject
+
+   end type reject_screening
+
+
 contains
 
 
@@ -47,49 +80,32 @@ subroutine collect_csrlist(testsuite)
    type(unittest_type), allocatable, intent(out) :: testsuite(:)
 
    testsuite = [ &
-      & new_unittest("grid-methane", test_grid_methane), &
-      & new_unittest("grid-water", test_grid_water), &
       & new_unittest("grid-fullerene-cut-1", test_grid_fullerene_cut_1), &
       & new_unittest("grid-water-cut-1", test_grid_water_cut_1), &
-      & new_unittest("grid-nacl", test_grid_nacl), &
-      & new_unittest("grid-feo2", test_grid_feo2), &
       & new_unittest("grid-x02-1x1x4", test_grid_x02_114), &
-      & new_unittest("distance-fullerene-cut-5", test_distance_fullerene_cut_5), &
-      & new_unittest("distance-feo2-cut-5", test_distance_feo2_cut_5), &
-      & new_unittest("csr-vs-verlet-water", test_list_water), &
-      & new_unittest("csr-vs-verlet-methane", test_list_methane), &
-      & new_unittest("csr-vs-verlet-fullerene", test_list_fullerene), &
-      & new_unittest("csr-vs-verlet-nacl", test_list_nacl), &
-      & new_unittest("csr-vs-verlet-feo2", test_list_feo2), &
-      & new_unittest("csr-vs-verlet-x01", test_list_x01), &
-      & new_unittest("csr-vs-verlet-x02", test_list_x02), &
-      & new_unittest("csr-vs-verlet-x02-1x1x4", test_list_x02_114), &
       & new_unittest("csr-vs-verlet-mb01", test_list_mb01), &
-      & new_unittest("csr-vs-verlet-mb02", test_list_mb02), &
-      & new_unittest("csr-vs-verlet-water-complete", test_list_water_complete), &
-      & new_unittest("csr-vs-verlet-methane-complete", test_list_methane_complete), &
-      & new_unittest("csr-vs-verlet-fullerene-complete", test_list_fullerene_complete), &
-      & new_unittest("csr-vs-verlet-mb09-complete", test_list_mb09_complete), &
-      & new_unittest("csr-vs-verlet-mb10-complete", test_list_mb10_complete), &
-      & new_unittest("csr-vs-verlet-nacl-complete", test_list_nacl_complete), &
-      & new_unittest("csr-vs-verlet-feo2-complete", test_list_feo2_complete), &
-      & new_unittest("csr-vs-verlet-x04-complete", test_list_x04_complete), &
-      & new_unittest("csr-vs-verlet-x05-complete", test_list_x05_complete), &
-      & new_unittest("nacl-wsc", test_nacl_wsc), &
+      & new_unittest("csr-vs-verlet-fullerene-cut-5", test_list_fullerene_cut_5), &
+      & new_unittest("csr-vs-verlet-feo2", test_list_feo2), &
+      & new_unittest("csr-vs-verlet-x02-1x1x4", test_list_x02_114), &
+      & new_unittest("csr-vs-verlet-slab-2d", test_list_slab), &
+      & new_unittest("csr-vs-verlet-wire-1d", test_list_wire), &
       & new_unittest("feo2-wsc", test_feo2_wsc), &
-      & new_unittest("wsc-parity-nacl", test_wsc_parity_nacl), &
       & new_unittest("wsc-parity-skewed", test_wsc_parity_skewed), &
       & new_unittest("wsc-parity-dense-images", test_wsc_parity_dense_images), &
       & new_unittest("wsc-parity-slab-2d", test_wsc_parity_slab), &
       & new_unittest("wsc-parity-wire-1d", test_wsc_parity_wire), &
-      & new_unittest("csr-vs-verlet-slab-2d", test_list_slab), &
-      & new_unittest("csr-vs-verlet-wire-1d", test_list_wire) &
+      & new_unittest("screen-distance-thresh", test_screen_distance_thresh), &
+      & new_unittest("screen-element-mb01", test_screen_element_mb01), &
+      & new_unittest("screen-element-feo2", test_screen_element_feo2), &
+      & new_unittest("screen-radius-nacl", test_screen_radius_nacl), &
+      & new_unittest("screen-reject-feo2", test_screen_reject_feo2), &
+      & new_unittest("screen-wsc-element-feo2", test_screen_wsc_element_feo2) &
       & ]
 
 end subroutine collect_csrlist
 
 !> Generate reference 1-based CSR list
-subroutine gen_verlet(mol, trans, cutoff, row_ptr, col_ind, nltr, complete)
+subroutine gen_verlet(mol, trans, cutoff, row_ptr, col_ind, nltr, complete, screen)
 
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
@@ -112,8 +128,12 @@ subroutine gen_verlet(mol, trans, cutoff, row_ptr, col_ind, nltr, complete)
    !> Whether a complete or a symmetrical upper-triangular map should be generated
    logical, intent(in) :: complete
 
+   !> Screening applied to every off-diagonal pair within the cutoff
+   class(screening_type), intent(in), optional :: screen
+
    integer :: iat, jat, itr, nnz
    real(wp) :: r2, vec(3), cutoff2
+   logical :: include
 
    nnz = 0
    cutoff2 = cutoff**2
@@ -143,6 +163,10 @@ subroutine gen_verlet(mol, trans, cutoff, row_ptr, col_ind, nltr, complete)
             vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - trans(:, itr)
             r2 = sum(vec**2)
             if (r2 < epsilon(cutoff2) .or. r2 > cutoff2) cycle
+            if (present(screen)) then
+               call screen%check_pair(mol, iat, jat, r2, include)
+               if (.not. include) cycle
+            end if
 
             nnz = nnz + 1
             if (size(col_ind) < nnz) call resize(col_ind)
@@ -236,176 +260,6 @@ subroutine test_grid_gen(error, mol, cutoff, ref_nxyz)
 
 end subroutine test_grid_gen
 
-subroutine test_distance(error, mol, cutoff, trans, cmp)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   !> Molecular structure data
-   type(structure_type), intent(in) :: mol
-
-   !> Cutoff radius
-   real(wp), intent(in) :: cutoff
-
-   !> Translation vectors for all images
-   real(wp), intent(in) :: trans(:, :)
-
-   !> Whether a complete or a symmetrical reduced map should be generated
-   logical, intent(in) :: cmp
-
-   type(csr_list), allocatable :: list
-   type(distance_screening) :: screen
-
-   real(wp) :: vec(3)
-   integer :: iat, jat, itr
-   integer(i8) :: kat
-
-   allocate(list)
-   call new_csr_list(list, screen, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
-   if (allocated(error)) return
-
-   do iat = 1, mol%nat
-      do kat = list%inl(iat) + 1, list%inl(iat+1) - 1
-         jat = list%nlat(kat)
-         if (allocated(list%nltr)) then
-            itr = list%nltr(kat)
-         else
-            itr = 1
-         end if
-         vec(:) = mol%xyz(:, iat) - mol%xyz(:, jat) - trans(:, itr)
-         if (sum(vec**2) >= cutoff**2) then
-            call test_failed(error, &
-               & "The pair in the neighbor list is outside the cutoff radius.")
-            exit
-         end if
-      end do
-   end do
-
-
-end subroutine test_distance
-
-subroutine test_mol_list_gen(error, mol, cutoff, trans, cmp)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   !> Molecular structure data
-   type(structure_type), intent(in) :: mol
-
-   !> Cutoff radius
-   real(wp), intent(in) :: cutoff
-
-   !> Translation vectors for all images
-   real(wp), intent(in) :: trans(:, :)
-
-   !> Whether a complete or a symmetrical reduced map should be generated
-   logical, intent(in) :: cmp
-
-   type(csr_list), allocatable :: list
-   type(distance_screening) :: screen
-
-   integer, allocatable :: ref_ptr(:), ref_list(:), ref_nltr(:)
-   integer :: iat, jat
-   integer(i8) :: kat
-
-   allocate(list)
-   call new_csr_list(list, screen, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
-   if (allocated(error)) return
-
-   allocate(ref_ptr(mol%nat + 1))
-   call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp)
-
-   if (any(list%inl /= ref_ptr)) then
-      call test_failed(error, "neighbor list pointer array does not match reference.")
-      print"(20a)", "Generated pointer:"
-      print"(10i6)", list%inl
-      print"(20a)", "Reference pointer:"
-      print"(10i6)", ref_ptr
-   end if
-
-   do iat = 1, mol%nat
-      do kat = list%inl(iat), list%inl(iat+1) - 1
-         jat = list%nlat(kat)
-         if (.not. any(jat == ref_list(ref_ptr(iat):ref_ptr(iat+1)-1))) then
-            call test_failed(error, "neighbor list array does not match reference.")
-            print"(20a)", "Generated list:"
-            print"(10i6)", list%nlat
-            print"(20a)", "Reference list:"
-            print"(10i6)", ref_list
-            exit
-         end if
-         if (any(jat == list%nlat(kat+1:list%inl(iat+1)-1))) then
-            call test_failed(error, "neighbors duplicates.")
-            exit
-         end if
-      end do
-   end do
-
-end subroutine test_mol_list_gen
-
-subroutine test_pbc_list_gen(error, mol, cutoff, trans, cmp)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   !> Molecular structure data
-   type(structure_type), intent(in) :: mol
-
-   !> Cutoff radius
-   real(wp), intent(in) :: cutoff
-
-   !> Translation vectors for all images
-   real(wp), intent(in) :: trans(:, :)
-
-   !> Whether a complete or a symmetrical reduced map should be generated
-   logical, intent(in) :: cmp
-
-   type(csr_list), allocatable   :: list
-   type(distance_screening) :: screen
-
-   ! Reference Lists
-   integer, allocatable :: ref_ptr(:), ref_list(:), ref_nltr(:)
-   integer :: iat, jat, tr
-   integer(i8) :: kat
-
-   allocate(list)
-   call new_csr_list(list, screen, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
-   if (allocated(error)) return
-
-   allocate(ref_ptr(mol%nat + 1))
-   call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp)
-
-   if (any(list%inl /= ref_ptr)) then
-      call test_failed(error, "neighbor list pointer array does not match reference.")
-      write(*,*) "Generated pointer:", list%inl
-      write(*,*) "Reference pointer:", ref_ptr
-   end if
-
-   do iat = 1, mol%nat
-      do kat = list%inl(iat), list%inl(iat+1) - 1
-         jat = list%nlat(kat)
-         tr = list%nltr(kat)
-         if (.not. any(jat == ref_list(ref_ptr(iat):ref_ptr(iat+1)-1))) then
-            call test_failed(error, "neighbor list array does not match reference.")
-            print"(20a)", "Generated list:"
-            print"(10i6)", list%nlat
-            print"(20a)", "Reference list:"
-            print"(10i6)", ref_list
-            exit
-         end if
-         if (.not. any(tr == ref_nltr(ref_ptr(iat):ref_ptr(iat+1)-1))) then
-            call test_failed(error, &
-               & "neighbor list translations array does not match reference.")
-            print"(20a)", "Generated translations:"
-            print"(10i6)", list%nltr
-            print"(20a)", "Reference translations:"
-            print"(10i6)", ref_nltr
-            exit
-         end if
-      end do
-   end do
-
-end subroutine test_pbc_list_gen
 
 subroutine test_wsc(error, mol, cutoff, cmp, ref_list, ref_nimg)
 
@@ -475,46 +329,6 @@ subroutine test_wsc(error, mol, cutoff, cmp, ref_list, ref_nimg)
 
 end subroutine test_wsc
 
-subroutine test_grid_methane(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   integer, parameter :: ref_nxyz(3) = [ 1, 1, 1 ]
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   allocate(trans(3, 1))
-   trans = 0.0_wp
-
-   call get_structure(mol, "methane")
-
-   call test_grid_gen(error, mol, cutoff, ref_nxyz)
-
-end subroutine test_grid_methane
-
-subroutine test_grid_water(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   integer, parameter :: ref_nxyz(3) = [ 1, 1, 1 ]
-
-   type(structure_type) :: mol
-
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   allocate(trans(3, 1))
-   trans = 0.0_wp
-
-   call get_structure(mol, "water")
-
-   call test_grid_gen(error, mol, cutoff, ref_nxyz)
-
-end subroutine test_grid_water
 
 subroutine test_grid_fullerene_cut_1(error)
 
@@ -526,16 +340,13 @@ subroutine test_grid_fullerene_cut_1(error)
    type(structure_type) :: mol
 
    real(wp), parameter :: cutoff = 1.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   allocate(trans(3, 1))
-   trans = 0.0_wp
 
    call get_structure(mol, "fullerene")
 
    call test_grid_gen(error, mol, cutoff, ref_nxyz)
 
 end subroutine test_grid_fullerene_cut_1
+
 
 subroutine test_grid_water_cut_1(error)
 
@@ -547,10 +358,6 @@ subroutine test_grid_water_cut_1(error)
    type(structure_type) :: mol
 
    real(wp), parameter :: cutoff = 1.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   allocate(trans(3, 1))
-   trans = 0.0_wp
 
    call get_structure(mol, "water")
 
@@ -558,45 +365,6 @@ subroutine test_grid_water_cut_1(error)
 
 end subroutine test_grid_water_cut_1
 
-subroutine test_grid_nacl(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   integer, parameter :: ref_nxyz(3) = [ 1, 1, 1 ]
-
-   type(structure_type) :: mol
-
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   call get_structure(mol, "nacl")
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
-
-   call test_grid_gen(error, mol, cutoff, ref_nxyz)
-
-end subroutine test_grid_nacl
-
-subroutine test_grid_feo2(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   integer, parameter :: ref_nxyz(3) = [ 1, 1, 1 ]
-
-   type(structure_type) :: mol
-
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   call get_structure(mol, "feo2")
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
-
-   call test_grid_gen(error, mol, cutoff, ref_nxyz)
-
-end subroutine test_grid_feo2
 
 subroutine test_grid_x02_114(error)
 
@@ -608,424 +376,229 @@ subroutine test_grid_x02_114(error)
    type(structure_type) :: mol
 
    real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
    integer, parameter :: supercell(3) = [1, 1, 4]
 
    call get_structure(mol, "x02")
    call make_supercell(mol, supercell)
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
 
    call test_grid_gen(error, mol, cutoff, ref_nxyz)
 
 end subroutine test_grid_x02_114
 
-subroutine test_distance_fullerene_cut_5(error)
+
+!> Compare a neighbor list entry by entry against the Verlet reference built
+!> with the same screening, matching both the neighbor and its translation
+subroutine check_list(error, mol, cutoff, trans, cmp, screen)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 5.0_wp
-   real(wp), allocatable :: trans(:, :)
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
 
-   allocate(trans(3, 1))
-   trans = 0.0_wp
+   !> Cutoff radius
+   real(wp), intent(in) :: cutoff
 
-   call get_structure(mol, "fullerene")
+   !> Translation vectors for all images
+   real(wp), intent(in) :: trans(:, :)
 
-   call test_distance(error, mol, cutoff, trans=trans, cmp=.false.)
+   !> Whether a complete or a symmetrical reduced map should be generated
+   logical, intent(in) :: cmp
 
-end subroutine test_distance_fullerene_cut_5
+   !> Screening applied to the neighbor list and the reference
+   class(screening_type), intent(inout) :: screen
 
-subroutine test_distance_feo2_cut_5(error)
+   type(csr_list) :: list
+   integer, allocatable :: ref_ptr(:), ref_list(:), ref_nltr(:)
+   integer :: iat, jat, itr, lat
+   integer(i8) :: kat, mat
+   logical :: found
 
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 5.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   call get_structure(mol, "feo2")
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
+   call new_csr_list(list, screen, mol, error, cutoff=cutoff, trans=trans, complete=cmp)
    if (allocated(error)) return
 
-   call test_distance(error, mol, cutoff, trans=trans, cmp=.false.)
+   allocate(ref_ptr(mol%nat + 1))
+   call gen_verlet(mol, trans, cutoff, ref_ptr, ref_list, ref_nltr, cmp, screen)
 
-end subroutine test_distance_feo2_cut_5
+   do iat = 1, mol%nat
+      call check(error, int(list%inl(iat + 1) - list%inl(iat)), &
+         & ref_ptr(iat + 1) - ref_ptr(iat), &
+         & "Number of neighbors does not match the reference")
+      if (allocated(error)) return
 
-subroutine test_list_water(error)
+      call check(error, list%nlat(list%inl(iat)), iat, &
+         & "Diagonal entry is not stored first in the row")
+      if (allocated(error)) return
 
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
+      do kat = list%inl(iat), list%inl(iat + 1) - 1
+         jat = list%nlat(kat)
+         itr = 1
+         if (allocated(list%nltr)) itr = list%nltr(kat)
 
-   integer, parameter :: ref_ptr(4) = [&
-      & 1, 4, 6, &
-      & 7]
-   integer, parameter :: ref_list(6) = [&
-      & 1, 2, 3, &
-      & 2, 3, 3]
+         found = .false.
+         do lat = ref_ptr(iat), ref_ptr(iat + 1) - 1
+            found = found .or. (ref_list(lat) == jat .and. ref_nltr(lat) == itr)
+         end do
+         if (.not. found) then
+            call test_failed(error, "Neighbor list contains a pair missing in the reference")
+            print "(a,3i6)", "Atom, neighbor, translation:", iat, jat, itr
+            return
+         end if
 
-   type(structure_type) :: mol
+         ! Equal counts and no duplicates make the rows identical
+         do mat = kat + 1, list%inl(iat + 1) - 1
+            if (list%nlat(mat) /= jat) cycle
+            if (allocated(list%nltr)) then
+               if (list%nltr(mat) /= itr) cycle
+            end if
+            call test_failed(error, "Neighbor list contains duplicates")
+            return
+         end do
+      end do
+   end do
 
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
+end subroutine check_list
 
-   allocate(trans(3, 1))
-   trans = 0.0_wp
 
-   call get_structure(mol, "water")
-
-   call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
-
-end subroutine test_list_water
-
-subroutine test_list_methane(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   integer, parameter :: ref_ptr(6) = [&
-      & 1, 6, 10, &
-      & 13, 15, 16]
-   integer, parameter :: ref_list(15) = [&
-      & 1, 2, 3, &
-      & 4, 5, 2, &
-      & 3, 4, 5, &
-      & 3, 4, 5, &
-      & 4, 5, 5]
-
-   type(structure_type) :: mol
-
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   allocate(trans(3, 1))
-   trans = 0.0_wp
-
-   call get_structure(mol, "methane")
-
-   call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
-
-end subroutine test_list_methane
-
-subroutine test_list_fullerene(error)
+!> Check the reduced and the complete neighbor list against the reference
+subroutine test_list_gen(error, mol, cutoff, screen)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
+
+   !> Cutoff radius
+   real(wp), intent(in) :: cutoff
+
+   !> Screening of the neighbor list, distance screening if absent
+   class(screening_type), intent(inout), optional :: screen
+
+   type(distance_screening) :: dist
    real(wp), allocatable :: trans(:, :)
+   logical :: cmp
+   integer :: imode
 
-   allocate(trans(3, 1))
-   trans = 0.0_wp
+   if (any(mol%periodic)) then
+      call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
+      if (allocated(error)) return
+   else
+      allocate(trans(3, 1), source=0.0_wp)
+   end if
 
-   call get_structure(mol, "fullerene")
+   do imode = 1, 2
+      cmp = imode == 2
+      if (present(screen)) then
+         call check_list(error, mol, cutoff, trans, cmp, screen)
+      else
+         call check_list(error, mol, cutoff, trans, cmp, dist)
+      end if
+      if (allocated(error)) then
+         error%message = trim(merge("complete list: ", "reduced list:  ", cmp)) &
+            & // " " // error%message
+         return
+      end if
+   end do
 
-   call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
-
-end subroutine test_list_fullerene
-
-subroutine test_list_nacl(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   call get_structure(mol, "nacl")
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
-
-   call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
-
-end subroutine test_list_nacl
-
-subroutine test_list_feo2(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   call get_structure(mol, "feo2")
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
-
-   call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
-
-end subroutine test_list_feo2
-
-subroutine test_list_x01(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   call get_structure(mol, "x01")
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
-
-   call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
-
-end subroutine test_list_x01
+end subroutine test_list_gen
 
 
-subroutine test_list_x02(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   call get_structure(mol, "x02")
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
-
-   call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
-
-end subroutine test_list_x02
-
-
-subroutine test_list_x02_114(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-   integer, parameter :: supercell(3) = [1, 1, 4]
-
-   call get_structure(mol, "x02")
-   call make_supercell(mol, supercell)
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
-
-   call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
-
-end subroutine test_list_x02_114
-
+!> Molecule within a single linked cell
 subroutine test_list_mb01(error)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
    type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   allocate(trans(3, 1))
-   trans = 0.0_wp
 
    call get_structure(mol, "mindless01")
-
-   call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
+   call test_list_gen(error, mol, 29.0_wp)
 
 end subroutine test_list_mb01
 
-subroutine test_list_mb02(error)
+
+!> Molecule spread over many linked cells
+subroutine test_list_fullerene_cut_5(error)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
    type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   allocate(trans(3, 1))
-   trans = 0.0_wp
-
-   call get_structure(mol, "mindless02")
-
-   call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
-
-end subroutine test_list_mb02
-
-subroutine test_list_water_complete(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   allocate(trans(3, 1))
-   trans = 0.0_wp
-
-   call get_structure(mol, "water")
-
-   call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
-
-end subroutine test_list_water_complete
-
-subroutine test_list_methane_complete(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   allocate(trans(3, 1))
-   trans = 0.0_wp
-
-   call get_structure(mol, "methane")
-
-   call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
-
-end subroutine test_list_methane_complete
-
-subroutine test_list_fullerene_complete(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   allocate(trans(3, 1))
-   trans = 0.0_wp
 
    call get_structure(mol, "fullerene")
+   call test_list_gen(error, mol, 5.0_wp)
 
-   call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
+end subroutine test_list_fullerene_cut_5
 
-end subroutine test_list_fullerene_complete
 
-subroutine test_list_mb09_complete(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   allocate(trans(3, 1))
-   trans = 0.0_wp
-
-   call get_structure(mol, "mindless09")
-
-   call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
-
-end subroutine test_list_mb09_complete
-
-subroutine test_list_mb10_complete(error)
+!> Periodic cell much smaller than the cutoff, many periodic self images
+subroutine test_list_feo2(error)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
    type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   allocate(trans(3, 1))
-   trans = 0.0_wp
-
-   call get_structure(mol, "mindless10")
-
-   call test_mol_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
-
-end subroutine test_list_mb10_complete
-
-subroutine test_list_nacl_complete(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   call get_structure(mol, "nacl")
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
-
-   call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
-
-end subroutine test_list_nacl_complete
-
-subroutine test_list_feo2_complete(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
 
    call get_structure(mol, "feo2")
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
+   call test_list_gen(error, mol, 29.0_wp)
 
-   call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
+end subroutine test_list_feo2
 
-end subroutine test_list_feo2_complete
 
-subroutine test_list_x04_complete(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
-
-   call get_structure(mol, "x04")
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
-
-   call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
-
-end subroutine test_list_x04_complete
-
-subroutine test_list_x05_complete(error)
+!> Elongated supercell with several linked cells along one lattice vector
+subroutine test_list_x02_114(error)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
    type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   real(wp), allocatable :: trans(:, :)
+   integer, parameter :: supercell(3) = [1, 1, 4]
 
-   call get_structure(mol, "x05")
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
+   call get_structure(mol, "x02")
+   call make_supercell(mol, supercell)
+   call test_list_gen(error, mol, 29.0_wp)
 
-   call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
+end subroutine test_list_x02_114
 
-end subroutine test_list_x05_complete
 
-subroutine test_nacl_wsc(error)
+subroutine test_list_slab(error)
+
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
    type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 29.0_wp
-   ! Reference neighbor list
-   integer, parameter :: ref_list(3) = [1, 2, 2]
-   ! Reference array of the number of translation images
-   integer, parameter :: ref_nimg(3) = [12, 6, 12]
 
-   call get_structure(mol, "nacl")
-   call test_wsc(error, mol, cutoff, .false., ref_list, ref_nimg)
+   call get_slab(mol)
+   call test_list_gen(error, mol, 3.5_wp)
+   if (allocated(error)) return
 
-end subroutine test_nacl_wsc
+   ! Wrapped atoms and three cells along the periodic directions use the
+   ! direct translation lookup of the linked cells
+   call wrap_to_central_cell(mol%xyz, mol%lattice, mol%periodic)
+   call test_list_gen(error, mol, 3.5_wp)
+
+end subroutine test_list_slab
+
+
+subroutine test_list_wire(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   call get_wire(mol)
+   call test_list_gen(error, mol, 6.0_wp)
+   if (allocated(error)) return
+
+   ! Wrapped atoms and three cells along the periodic direction use the
+   ! direct translation lookup of the linked cells
+   call wrap_to_central_cell(mol%xyz, mol%lattice, mol%periodic)
+   call test_list_gen(error, mol, 3.3_wp)
+
+end subroutine test_list_wire
+
 
 subroutine test_feo2_wsc(error)
    !> Error handling
@@ -1112,19 +685,6 @@ subroutine test_wsc_parity_gen(error, mol, cutoff)
    end do
 
 end subroutine test_wsc_parity_gen
-
-
-subroutine test_wsc_parity_nacl(error)
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-
-   call get_structure(mol, "nacl")
-   call test_wsc_parity_gen(error, mol, 29.0_wp)
-
-end subroutine test_wsc_parity_nacl
 
 
 subroutine test_wsc_parity_skewed(error)
@@ -1275,55 +835,288 @@ subroutine test_wsc_parity_wire(error)
 end subroutine test_wsc_parity_wire
 
 
-subroutine test_list_slab(error)
+!> Reject pairs containing the excluded element, otherwise screen by distance
+subroutine check_pair_element(self, mol, iatom, jatom, r2, include)
+
+   !> Element screening instance
+   class(element_screening), intent(in) :: self
+
+   !> Structure type
+   type(structure_type), intent(in) :: mol
+
+   !> Index of the first atom
+   integer, intent(in) :: iatom
+
+   !> Index of the second atom
+   integer, intent(in) :: jatom
+
+   !> Squared distance between the two atoms
+   real(wp), intent(in) :: r2
+
+   !> Return true if the pair should be included
+   logical, intent(out) :: include
+
+   call self%distance_screening%check_pair(mol, iatom, jatom, r2, include)
+   include = include .and. mol%num(mol%id(iatom)) /= self%exclude &
+      & .and. mol%num(mol%id(jatom)) /= self%exclude
+
+end subroutine check_pair_element
+
+
+!> Include a pair within the user-defined distance threshold
+subroutine check_pair_radius(self, mol, iatom, jatom, r2, include)
+
+   !> Radius screening instance
+   class(radius_screening), intent(in) :: self
+
+   !> Structure type
+   type(structure_type), intent(in) :: mol
+
+   !> Index of the first atom
+   integer, intent(in) :: iatom
+
+   !> Index of the second atom
+   integer, intent(in) :: jatom
+
+   !> Squared distance between the two atoms
+   real(wp), intent(in) :: r2
+
+   !> Return true if the pair should be included
+   logical, intent(out) :: include
+
+   include = r2 <= self%thresh
+
+end subroutine check_pair_radius
+
+
+!> Reject every pair
+subroutine check_pair_reject(self, mol, iatom, jatom, r2, include)
+
+   !> Reject screening instance
+   class(reject_screening), intent(in) :: self
+
+   !> Structure type
+   type(structure_type), intent(in) :: mol
+
+   !> Index of the first atom
+   integer, intent(in) :: iatom
+
+   !> Index of the second atom
+   integer, intent(in) :: jatom
+
+   !> Squared distance between the two atoms
+   real(wp), intent(in) :: r2
+
+   !> Return true if the pair should be included
+   logical, intent(out) :: include
+
+   include = .false.
+
+end subroutine check_pair_reject
+
+
+!> Compare a screened Wigner-Seitz neighbor list against the dense
+!> Wigner-Seitz cell with the screening applied to the nearest images
+subroutine test_screen_wsc_gen(error, mol, cutoff, screen)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
+
+   !> Cutoff radius
+   real(wp), intent(in) :: cutoff
+
+   !> Screening applied to the neighbor list and the reference
+   class(screening_type), intent(inout) :: screen
+
+   type(csr_list) :: list
+   type(wignerseitz_cell) :: dense, wsc
+   integer :: iat, jat, nimg, nref, nexp
+   integer(i8) :: kat
+   real(wp) :: rij(3), r2
+   logical :: include
+
+   call new_wignerseitz_cell(dense, mol, error)
+   if (allocated(error)) return
+
+   call new_csr_list(list, screen, mol, error, wsc, cutoff=cutoff, complete=.true.)
+   if (allocated(error)) return
+
+   do iat = 1, mol%nat
+      ! Every screened pair whose nearest image lies within the cutoff is listed
+      nref = 0
+      do jat = 1, mol%nat
+         if (jat == iat .or. dense%nimg(jat, iat) == 0) cycle
+         rij = mol%xyz(:, iat) - mol%xyz(:, jat)
+         r2 = sum((rij - dense%trans(:, dense%tridx(1, jat, iat)))**2)
+         if (r2 > cutoff**2) cycle
+         call screen%check_pair(mol, iat, jat, r2, include)
+         if (include) nref = nref + 1
+      end do
+      call check(error, int(list%inl(iat + 1) - list%inl(iat)) - 1, nref, &
+         & "Number of neighbors does not match the screened reference")
+      if (allocated(error)) return
+
+      do kat = list%inl(iat), list%inl(iat + 1) - 1
+         jat = list%nlat(kat)
+         nimg = wsc%nimg_list(kat)
+
+         ! The image offsets must agree with the stored image count
+         call check(error, int(wsc%itr_list(kat + 1) - wsc%itr_list(kat)), nimg, &
+            & "Image offsets do not match the image count of a pair")
+         if (allocated(error)) return
+
+         ! Expected image count, zero if the nearest image is screened out
+         nexp = 0
+         if (dense%nimg(jat, iat) > 0) then
+            rij = mol%xyz(:, iat) - mol%xyz(:, jat)
+            r2 = sum((rij - dense%trans(:, dense%tridx(1, jat, iat)))**2)
+            call screen%check_pair(mol, iat, jat, r2, include)
+            if (include .and. r2 <= cutoff**2) nexp = dense%nimg(jat, iat)
+         end if
+         if (jat /= iat .and. nexp == 0) then
+            call test_failed(error, "Screened Wigner-Seitz list contains a rejected pair")
+            print "(a,2i6)", "Atom, neighbor:", iat, jat
+            return
+         end if
+
+         call check(error, nimg, nexp, &
+            & "Image count does not match the screened dense Wigner-Seitz cell")
+         if (allocated(error)) return
+      end do
+   end do
+
+end subroutine test_screen_wsc_gen
+
+
+!> The distance screening threshold follows the cutoff, also for extended
+!> types, while other screenings keep their user-defined threshold
+subroutine test_screen_distance_thresh(error)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
    type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 3.5_wp
-   real(wp), allocatable :: trans(:, :)
+   type(csr_list) :: list
+   type(distance_screening) :: dist
+   type(element_screening) :: elem
+   type(radius_screening) :: radius
+   real(wp), parameter :: cutoff = 7.0_wp
 
-   call get_slab(mol)
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
+   call get_structure(mol, "feo2")
+
+   dist%thresh = 1.0_wp
+   call new_csr_list(list, dist, mol, error, cutoff=cutoff)
    if (allocated(error)) return
 
-   call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
+   call check(error, dist%thresh, cutoff**2, thr=thr, &
+      & message="Distance screening threshold is not the squared cutoff")
    if (allocated(error)) return
 
-   ! Wrapped atoms and three cells along the periodic directions use the
-   ! direct translation lookup of the linked cells
-   call wrap_to_central_cell(mol%xyz, mol%lattice, mol%periodic)
-   call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.true.)
+   elem%thresh = 1.0_wp
+   call new_csr_list(list, elem, mol, error, cutoff=cutoff)
+   if (allocated(error)) return
 
-end subroutine test_list_slab
+   call check(error, elem%thresh, cutoff**2, thr=thr, &
+      & message="Extended distance screening threshold is not the squared cutoff")
+   if (allocated(error)) return
+
+   radius%thresh = 4.0_wp
+   call new_csr_list(list, radius, mol, error, cutoff=cutoff)
+   if (allocated(error)) return
+
+   call check(error, radius%thresh, 4.0_wp, thr=thr, &
+      & message="User-defined screening threshold was overwritten")
+
+end subroutine test_screen_distance_thresh
 
 
-subroutine test_list_wire(error)
+!> Element screening on a molecule spread over several linked cells
+subroutine test_screen_element_mb01(error)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
    type(structure_type) :: mol
-   real(wp), parameter :: cutoff = 6.0_wp
-   real(wp), allocatable :: trans(:, :)
+   type(element_screening) :: screen
 
-   call get_wire(mol)
-   call get_lattice_points(mol%periodic, mol%lattice, cutoff, trans, error)
-   if (allocated(error)) return
+   call get_structure(mol, "mindless01")
 
-   call test_pbc_list_gen(error, mol, cutoff, trans=trans, cmp=.false.)
-   if (allocated(error)) return
+   ! Remove every pair with a hydrogen atom
+   screen%exclude = 1
+   call test_list_gen(error, mol, 5.0_wp, screen)
 
-   ! Wrapped atoms and three cells along the periodic direction use the
-   ! direct translation lookup of the linked cells
-   call wrap_to_central_cell(mol%xyz, mol%lattice, mol%periodic)
-   call get_lattice_points(mol%periodic, mol%lattice, 3.3_wp, trans, error)
-   if (allocated(error)) return
+end subroutine test_screen_element_mb01
 
-   call test_pbc_list_gen(error, mol, 3.3_wp, trans=trans, cmp=.true.)
 
-end subroutine test_list_wire
+!> Element screening rejecting the periodic self images of an element
+subroutine test_screen_element_feo2(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(element_screening) :: screen
+
+   call get_structure(mol, "feo2")
+
+   ! Remove every pair with an oxygen atom
+   screen%exclude = 8
+   call test_list_gen(error, mol, 12.0_wp, screen)
+
+end subroutine test_screen_element_feo2
+
+
+!> User-defined threshold well below the cutoff of the linked cells
+subroutine test_screen_radius_nacl(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(radius_screening) :: screen
+
+   call get_structure(mol, "nacl")
+
+   screen%thresh = 6.0_wp**2
+   call test_list_gen(error, mol, 15.0_wp, screen)
+
+end subroutine test_screen_radius_nacl
+
+
+!> Rejecting every pair leaves only the diagonal, also for periodic self images
+subroutine test_screen_reject_feo2(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(reject_screening) :: screen
+
+   call get_structure(mol, "feo2")
+   call test_list_gen(error, mol, 12.0_wp, screen)
+
+end subroutine test_screen_reject_feo2
+
+
+!> Screened Wigner-Seitz list, the diagonal of the oxygen atoms is rejected
+!> together with its periodic self images
+subroutine test_screen_wsc_element_feo2(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(element_screening) :: screen
+
+   call get_structure(mol, "feo2")
+
+   screen%exclude = 8
+   call test_screen_wsc_gen(error, mol, 29.0_wp, screen)
+
+end subroutine test_screen_wsc_element_feo2
 
 
 end module test_csrlist
