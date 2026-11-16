@@ -307,7 +307,6 @@ subroutine build_list(self, screen, mol, error, wsc)
       zero_vec = 0.0_wp
       call find_wsc_pairs(self%trans, zero_vec, nimg_count, self_tridx, r2_min)
       if (nimg_count > 0 .and. r2_min <= cutoff2) nself = nimg_count
-      nimg_max = nself
    else
       allocate(self_tridx(0))
    end if
@@ -407,7 +406,7 @@ subroutine neighbor_pass(self, screen, mol, grid, lstore, tridx, cnt, icnt, nsel
    integer :: nsten, ntr, nmax
    integer :: ic, shift, ns, jc, lcatidx, lcatidxst, lcatidxfin
    integer :: checkat, checkatst, checkatfin, tr, trst, trfin
-   integer :: iat, jmin, nn, nimgs, nimg_count
+   integer :: iat, jmin, nn, nimgs, nimg_count, nsel
    integer(i8) :: pos, itp
    real(wp) :: xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, r2_min, vec(3)
    logical :: use_wsc, lnltr, complete, include
@@ -427,7 +426,7 @@ subroutine neighbor_pass(self, screen, mol, grid, lstore, tridx, cnt, icnt, nsel
    !$omp parallel default(none)&
    !$omp& private(ic, shift, ns, jc, lcatidx, lcatidxst, lcatidxfin) &
    !$omp& private(checkat, checkatst, checkatfin, tr, trst, trfin) &
-   !$omp& private(iat, jmin, nn, nimgs, nimg_count, tridx_arr, pos, itp) &
+   !$omp& private(iat, jmin, nn, nimgs, nimg_count, nsel, tridx_arr, pos, itp) &
    !$omp& private(xi, yi, zi, xit, yit, zit, dx, dy, dz, r2, vec) &
    !$omp& private(jcl, itrl, include, r2_min) &
    !$omp& shared(grid, error, self, lstore, tridx, cnt, icnt, nself, self_tridx) &
@@ -468,6 +467,15 @@ subroutine neighbor_pass(self, screen, mol, grid, lstore, tridx, cnt, icnt, nsel
          pos = 0_i8
          itp = 0_i8
 
+         ! Self images of the diagonal kept by the screening, the same in the
+         ! counting and the filling pass
+         nsel = 0
+         if (use_wsc .and. nself > 0) then
+            call screen%check_pair(mol, iat, iat, r2_min_self, include)
+            if (include) nsel = nself
+            nmax = max(nmax, nsel)
+         end if
+
          ! C. Inject the diagonal (self-interaction) at position one
          if (lstore) then
             pos = self%inl(iat)
@@ -475,12 +483,11 @@ subroutine neighbor_pass(self, screen, mol, grid, lstore, tridx, cnt, icnt, nsel
             if (lnltr) self%nltr(pos) = 1
             if (use_wsc) then
                itp = tridx(iat)
-               call screen%check_pair(mol, iat, iat, r2_min_self, include)
-               wsc%nimg_list(pos) = nself
+               wsc%nimg_list(pos) = nsel
                wsc%itr_list(pos) = int(itp)
-               if (nself > 0 .and. include) then
-                  wsc%tridx_list(itp:itp + nself - 1) = self_tridx(1:nself)
-                  itp = itp + nself
+               if (nsel > 0) then
+                  wsc%tridx_list(itp:itp + nsel - 1) = self_tridx(1:nsel)
+                  itp = itp + nsel
                end if
             end if
          end if
@@ -576,7 +583,7 @@ subroutine neighbor_pass(self, screen, mol, grid, lstore, tridx, cnt, icnt, nsel
                   & "exceeds the addressable range of the CSR index arrays")
                exit
             end if
-            if (use_wsc) icnt(iat) = nimgs + nself
+            if (use_wsc) icnt(iat) = nimgs + nsel
          end if
       end do
    end do
