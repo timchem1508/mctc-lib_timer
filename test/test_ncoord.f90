@@ -280,7 +280,7 @@ contains
             end do
             eps(ic, id) = eps(ic, id) + step
             displaced%xyz(:, :) = matmul(eps, mol%xyz)
-            displaced%lattice(:, :) = matmul(eps, mol%lattice)
+            if (any(mol%periodic)) displaced%lattice(:, :) = matmul(eps, mol%lattice)
             gradient(:, :) = 0.0_wp
             sigma_r(:, :) = 0.0_wp
             call ncoord%add_coordination_number_derivs(displaced, matmul(eps, lattr), &
@@ -288,7 +288,7 @@ contains
 
             eps(ic, id) = eps(ic, id) - 2.0_wp*step
             displaced%xyz(:, :) = matmul(eps, mol%xyz)
-            displaced%lattice(:, :) = matmul(eps, mol%lattice)
+            if (any(mol%periodic)) displaced%lattice(:, :) = matmul(eps, mol%lattice)
             gradient(:, :) = 0.0_wp
             sigma_l(:, :) = 0.0_wp
             call ncoord%add_coordination_number_derivs(displaced, matmul(eps, lattr), &
