@@ -582,9 +582,10 @@ contains
       type(distance_screening) :: screen
       real(wp), allocatable :: dEdcn(:), hessian(:, :), hessl(:, :), lattr(:, :)
       real(wp), allocatable :: hesslist(:, :, :)
-      real(wp) :: elst(3, 3, 3, 3)
+      real(wp) :: elst(3, 3, 3, 3), elstl(3, 3, 3, 3)
 
       elst(:, :, :, :) = 0.0_wp
+      elstl(:, :, :, :) = 0.0_wp
       allocate(dEdcn(mol%nat), hessian(3*mol%nat, 3*mol%nat), &
          & hessl(3*mol%nat, 3*mol%nat))
       do iat = 1, mol%nat
@@ -603,7 +604,7 @@ contains
 
       allocate(hesslist(3, 3, size(list%nlat)), source=0.0_wp)
       call ncoord%add_coordination_number_hessian_list(mol, lattr, dEdcn, list, &
-         & hesslist)
+         & hesslist, elstl)
 
       ! The upper triangle of the row of i holds the blocks of the atoms j >= i
       hessl(:, :) = 0.0_wp
@@ -626,6 +627,13 @@ contains
          call test_failed(error, "Compressed CN Hessian from the "// &
             & "sorted complete list does not match")
          print "(a,es21.14)", "Max Hessian deviation: ", maxval(abs(hessl - hessian))
+         return
+      end if
+
+      if (any(abs(elstl - elst) > thr*max(1.0_wp, maxval(abs(elst))))) then
+         call test_failed(error, "Strain Hessian from the sorted complete list "// &
+            & "does not match")
+         print "(a,es21.14)", "Max strain deviation: ", maxval(abs(elstl - elst))
          return
       end if
 

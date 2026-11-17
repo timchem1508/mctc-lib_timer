@@ -968,7 +968,7 @@ contains
    !> coordination numbers using the CSR-based neighbour list,
    !> including the smooth CN cutoff if enabled.
    subroutine add_coordination_number_hessian_list(self, mol, trans, dEdcn, &
-      & list, hesslist)
+      & list, hesslist, elst)
 
       !> Coordination number container
       class(ncoord_type), intent(in) :: self
@@ -989,10 +989,15 @@ contains
       !> the entry of atom j >= i in the row of atom i holds the block (j, i)
       real(wp), intent(inout) :: hesslist(:, :, :)
 
-      integer :: iat, jat, izp, jzp, itr, itrst, itrfin, nlow
+      !> Second derivative w.r.t. strain x -> (1 + eps) x, element (a, b, c, d) is eps_ab, eps_cd
+      real(wp), intent(inout) :: elst(:, :, :, :)
+
+      integer :: iat, jat, izp, jzp, itr, itrst, itrfin, nlow, ia, ib
       integer(i8) :: kat, hat, nfin
       integer :: ic, jc
-      logical :: trlist
+      logical :: trlist, self_image
+      real(wp) :: elst_local(3, 3, 3, 3)
+      real(wp), allocatable :: weights(:)
       real(wp) :: r2, r1, rij(3), cutoff2, den, dEdcnij
       real(wp) :: countd, countd2, box(3, 3), pair_box(3, 3)
       real(wp) :: idamp, jdamp
@@ -1009,6 +1014,15 @@ contains
          call ncoord_d_list(self, mol, trans, cn, dcndrlist, dcndL, list)
          call add_cn_cut_hessian_list(self%cut, cn, dcndrlist, dEdcn, hesslist, &
             & list)
+         weights = dEdcn*d2log_cn_cut(cn, self%cut)
+         do iat = 1, mol%nat
+            do jc = 1, 3
+               do ic = 1, 3
+                  elst(:, :, ic, jc) = elst(:, :, ic, jc) &
+                     & + weights(iat)*dcndL(:, :, iat)*dcndL(ic, jc, iat)
+               end do
+            end do
+         end do
          deallocate(dcndL, dcndrlist)
       end if
 
@@ -1019,14 +1033,15 @@ contains
       end if
 
       allocate(diagonal(3, 3, mol%nat), source=0.0_wp)
+      elst_local(:, :, :, :) = 0.0_wp
 
       ! Each thread owns the upper-triangle entries of row iat
       !$omp parallel do default(none) schedule(runtime) &
       !$omp shared(self, mol, lattr, cn, cutoff2, dEdcn, list, trlist, hesslist) &
       !$omp private(iat, jat, kat, izp, jzp, itr, itrst, itrfin, ic, jc, &
       !$omp& r2, r1, rij, den, dEdcnij, countd, countd2, box, pair_box, &
-      !$omp& idamp, jdamp, nfin, nlow) &
-      !$omp reduction(+:diagonal)
+      !$omp& idamp, jdamp, nfin, nlow, ia, ib, self_image) &
+      !$omp reduction(+:diagonal, elst_local)
       do iat = 1, mol%nat
          izp = mol%id(iat)
 
@@ -1037,18 +1052,23 @@ contains
          nfin = list%inl(iat + 1) - 1
          nlow = findloc(list%nlat(list%inl(iat) + 1:nfin) < iat, .true., dim=1)
          if (nlow > 0) nfin = list%inl(iat) + nlow - 1
-         do kat = list%inl(iat) + 1, nfin
+         do kat = list%inl(iat), nfin
             jat = list%nlat(kat)
             ! Evaluate each unordered pair once in the row of the atom of lower index;
-            ! self-images move rigidly with the atom and have no Cartesian Hessian.
-            if (jat <= iat) cycle
+            ! self-images move rigidly with the atom, only the strain Hessian depends on them
+            if (jat < iat) cycle
+            self_image = jat == iat
             jzp = mol%id(jat)
             den = self%get_en_factor(izp, jzp)
 
             jdamp = 1.0_wp
             if (self%cut > 0.0_wp) jdamp = dlog_cn_cut(cn(jat), self%cut)
 
-            dEdcnij = dEdcn(iat)*idamp + dEdcn(jat)*self%directed_factor*jdamp
+            if (self_image) then
+               dEdcnij = dEdcn(iat)*idamp
+            else
+               dEdcnij = dEdcn(iat)*idamp + dEdcn(jat)*self%directed_factor*jdamp
+            end if
 
             itrst = 1
             itrfin = size(lattr, dim=2)
@@ -1076,7 +1096,22 @@ contains
                   box(ic, ic) = box(ic, ic) + dEdcnij*countd/r1
                end do
                pair_box(:, :) = pair_box(:, :) + box(:, :)
+
+               ! The pair vector is linear in the strain, f_a r_b has two strain dependent factors
+               do jc = 1, 3
+                  do ic = 1, 3
+                     do ib = 1, 3
+                        do ia = 1, 3
+                           elst_local(ia, ib, ic, jc) = elst_local(ia, ib, ic, jc) &
+                              & + box(ia, ic)*rij(ib)*rij(jc)
+                        end do
+                     end do
+                     elst_local(:, ic, ic, jc) = elst_local(:, ic, ic, jc) &
+                        & + dEdcnij*countd*rij(:)*rij(jc)/r1
+                  end do
+               end do
             end do
+            if (self_image) cycle
 
             diagonal(:, :, iat) = diagonal(:, :, iat) + pair_box(:, :)
             diagonal(:, :, jat) = diagonal(:, :, jat) + pair_box(:, :)
@@ -1095,6 +1130,7 @@ contains
       !$omp end parallel do
 
       deallocate(diagonal)
+      elst(:, :, :, :) = elst + elst_local
 
    end subroutine add_coordination_number_hessian_list
 
