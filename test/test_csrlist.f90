@@ -99,7 +99,9 @@ subroutine collect_csrlist(testsuite)
       & new_unittest("screen-element-feo2", test_screen_element_feo2), &
       & new_unittest("screen-radius-nacl", test_screen_radius_nacl), &
       & new_unittest("screen-reject-feo2", test_screen_reject_feo2), &
-      & new_unittest("screen-wsc-element-feo2", test_screen_wsc_element_feo2) &
+      & new_unittest("screen-wsc-element-feo2", test_screen_wsc_element_feo2), &
+      & new_unittest("wsc-reuse", test_wsc_reuse), &
+      & new_unittest("empty-structure", test_empty_structure) &
       & ]
 
 end subroutine collect_csrlist
@@ -1117,6 +1119,52 @@ subroutine test_screen_wsc_element_feo2(error)
    call test_screen_wsc_gen(error, mol, 29.0_wp, screen)
 
 end subroutine test_screen_wsc_element_feo2
+
+
+!> Regression test for reusing a wignerseitz_cell across new_csr_list calls
+subroutine test_wsc_reuse(error)
+   type(error_type), allocatable, intent(out) :: error
+   type(structure_type) :: mol
+   type(csr_list) :: list
+   type(distance_screening) :: screen
+   type(wignerseitz_cell) :: wsc
+
+   call get_structure(mol, "nacl")
+   call new_csr_list(list, screen, mol, error, wsc=wsc, cutoff=5.0_wp)
+   if (allocated(error)) return
+   call new_csr_list(list, screen, mol, error, wsc=wsc, cutoff=29.0_wp)
+   if (allocated(error)) return
+   if (any(wsc%nimg_list /= [12, 6, 12])) then
+      call test_failed(error, "Unexpected image counts after reusing wignerseitz_cell")
+      return
+   end if
+
+   mol%nat = 0
+   call new_csr_list(list, screen, mol, error, wsc=wsc, cutoff=5.0_wp)
+   if (allocated(error)) return
+   call check(error, size(wsc%nimg_list), 0)
+
+end subroutine test_wsc_reuse
+
+
+!> Index arrays of an empty structure are allocated with zero size
+subroutine test_empty_structure(error)
+   type(error_type), allocatable, intent(out) :: error
+   type(structure_type) :: mol
+   type(csr_list) :: list
+   type(distance_screening) :: screen
+
+   call get_structure(mol, "nacl")
+   mol%nat = 0
+   call new_csr_list(list, screen, mol, error, cutoff=5.0_wp)
+   if (allocated(error)) return
+   if (.not.allocated(list%nlat) .or. .not.allocated(list%nltr)) then
+      call test_failed(error, "Index arrays of an empty structure are not allocated")
+      return
+   end if
+   call check(error, size(list%nlat) + size(list%nltr), 0)
+
+end subroutine test_empty_structure
 
 
 end module test_csrlist

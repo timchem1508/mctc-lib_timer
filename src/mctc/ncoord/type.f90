@@ -422,7 +422,7 @@ contains
                r1 = sqrt(r2)
 
                countf = den * self%ncoord_count(izp, jzp, r1)
-               countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
+               countd = (den * self%ncoord_dcount(izp, jzp, r1) / r1) * rij
                sigma = outerprod(rij, countd)
 
                cn_local(iat) = cn_local(iat) + countf
@@ -535,7 +535,7 @@ contains
                r1 = sqrt(r2)
 
                countf = den * self%ncoord_count(izp, jzp, r1)
-               countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
+               countd = (den * self%ncoord_dcount(izp, jzp, r1) / r1) * rij
                sigma = outerprod(rij, countd)
 
                cn_local(iat) = cn_local(iat) + countf
@@ -638,7 +638,7 @@ contains
                if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
                r1 = sqrt(r2)
 
-               countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
+               countd = (den * self%ncoord_dcount(izp, jzp, r1) / r1) * rij
 
                gradient_local(:, iat) = gradient_local(:, iat) + countd * dEdcnij
                gradient_local(:, jat) = gradient_local(:, jat) - countd * dEdcnij
@@ -758,7 +758,7 @@ contains
                if (r2 > cutoff2 .or. r2 < 1.0e-12_wp) cycle
                r1 = sqrt(r2)
 
-               countd = den * self%ncoord_dcount(izp, jzp, r1) * rij/r1
+               countd = (den * self%ncoord_dcount(izp, jzp, r1) / r1) * rij
 
                ds = outerprod(rij, countd)
                sigma_local(:, :) = sigma_local(:, :) + ds * dEdcns
@@ -1140,8 +1140,13 @@ contains
    subroutine add_cn_cut_hessian(cnmax, cn, dcndr, dcndL, dEdcn, hessian, elst)
       !> Maximum coordination number
       real(wp), intent(in) :: cnmax
-      !> Unmodified coordination numbers and Cartesian derivatives
-      real(wp), intent(in) :: cn(:), dcndr(:, :, :), dcndL(:, :, :)
+      !> Unmodified coordination numbers
+      real(wp), intent(in) :: cn(:)
+      !> Cartesian derivatives of the unmodified coordination numbers,
+      !> entries below sqrt(tiny) are set to zero
+      real(wp), intent(inout) :: dcndr(:, :, :)
+      !> Lattice derivatives of the unmodified coordination numbers
+      real(wp), intent(in) :: dcndL(:, :, :)
       !> Derivative with respect to the capped coordination numbers
       real(wp), intent(in) :: dEdcn(:)
       !> Cartesian Hessian in flattened (3*nat, 3*nat) representation
@@ -1149,6 +1154,7 @@ contains
       !> Second derivative w.r.t. strain
       real(wp), intent(inout) :: elst(:, :, :, :)
 
+      real(wp), parameter :: small = sqrt(tiny(1.0_wp))
       integer :: iat, jat, kat, ic, jc, ii, jj
       real(wp) :: factor
       real(wp), allocatable :: weights(:)
@@ -1163,6 +1169,13 @@ contains
             end do
          end do
       end do
+
+      ! Entries below sqrt(tiny) change the Hessian by about sqrt(tiny) relative
+      ! to the other contributions, far below machine precision. Zeroing them
+      ! lets the loop skip them and avoids slow arithmetic on subnormal numbers.
+      ! Hardware flush-to-zero only covers values below tiny, it is enabled with
+      ! -ffast-math in gfortran and by default from -O1 in Intel compilers.
+      where (abs(dcndr) < small) dcndr = 0.0_wp
 
       ! Each thread owns complete Hessian columns, avoiding a matrix reduction.
       !$omp parallel do collapse(2) schedule(runtime) default(none) &

@@ -18,6 +18,7 @@ tests = [
   'csrlist-linal',
   'cutoff',
   'data',
+  'dotfiles',
   'math',
   'ncoord',
   'read',

@@ -21,6 +21,7 @@ set(
   "csrlist-screening"
   "cutoff"
   "data"
+  "dotfiles"
   "math"
   "ncoord"
   "read"

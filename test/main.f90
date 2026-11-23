@@ -23,6 +23,7 @@ program tester
    use test_csrlist_linal, only : collect_csrlist_linal
    use test_cutoff, only : collect_cutoff
    use test_data, only : collect_data
+   use test_dotfiles, only : collect_dotfiles
    use test_math, only : collect_math
    use test_ncoord, only : collect_ncoord
    use test_read, only : collect_read
@@ -72,6 +73,7 @@ program tester
       & new_testsuite("sortlist", collect_sortlist), &
       & new_testsuite("cutoff", collect_cutoff), &
       & new_testsuite("data", collect_data), &
+      & new_testsuite("dotfiles", collect_dotfiles), &
       & new_testsuite("math", collect_math), &
       & new_testsuite("ncoord", collect_ncoord), &
       & new_testsuite("timer", collect_timer), &

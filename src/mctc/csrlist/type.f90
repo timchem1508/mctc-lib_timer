@@ -187,7 +187,7 @@ subroutine new_csr_list(self, screen, mol, error, wsc, cutoff, trans, complete)
    type(error_type), allocatable, intent(out) :: error
 
    !> Wigner-Seitz cell type, enables the Wigner-Seitz image search
-   type(wignerseitz_cell), intent(inout), optional :: wsc
+   type(wignerseitz_cell), intent(out), optional :: wsc
 
    !> Realspace cutoff for neighborlist generation
    real(wp), intent(in), optional :: cutoff
@@ -238,7 +238,7 @@ subroutine build_list(self, screen, mol, error, wsc)
    type(error_type), allocatable, intent(out) :: error
 
    !> Wigner-Seitz cell type
-   type(wignerseitz_cell), intent(inout), optional :: wsc
+   type(wignerseitz_cell), intent(out), optional :: wsc
 
    type(grid_type) :: grid
 
@@ -265,8 +265,7 @@ subroutine build_list(self, screen, mol, error, wsc)
       if (allocated(error)) return
 
       self%trans = trans
-      wsc%trans = trans
-      wsc%nimg_max = 0
+      call move_alloc(trans, wsc%trans)
    else if (.not. allocated(self%trans)) then
       if (periodic) then
          call get_lattice_points(mol%periodic, mol%lattice, self%cutoff, trans, error)
@@ -280,7 +279,17 @@ subroutine build_list(self, screen, mol, error, wsc)
 
    if (allocated(self%inl)) deallocate(self%inl)
    allocate(self%inl(nat + 1), source=1_i8)
-   if (nat <= 0) return
+   if (nat <= 0) then
+      allocate(self%nlat(0))
+      if (use_wsc) then
+         allocate(wsc%nimg_list(0))
+         allocate(wsc%itr_list(1), source=1_i8)
+         allocate(wsc%tridx_list(0))
+      else if (periodic) then
+         allocate(self%nltr(0))
+      end if
+      return
+   end if
 
    ! 2. Linked cell grid. Each orthogonal height of the linked-cell is larger
    ! or equal to the cutoff distance.
@@ -484,7 +493,7 @@ subroutine neighbor_pass(self, screen, mol, grid, lstore, tridx, cnt, icnt, nsel
             if (use_wsc) then
                itp = tridx(iat)
                wsc%nimg_list(pos) = nsel
-               wsc%itr_list(pos) = int(itp)
+               wsc%itr_list(pos) = itp
                if (nsel > 0) then
                   wsc%tridx_list(itp:itp + nsel - 1) = self_tridx(1:nsel)
                   itp = itp + nsel
@@ -523,7 +532,7 @@ subroutine neighbor_pass(self, screen, mol, grid, lstore, tridx, cnt, icnt, nsel
                   if (lstore) then
                      self%nlat(pos + nn) = grid%cellatidx(checkat)
                      wsc%nimg_list(pos + nn) = nimg_count
-                     wsc%itr_list(pos + nn) = int(itp)
+                     wsc%itr_list(pos + nn) = itp
                      wsc%tridx_list(itp:itp + nimg_count - 1) = &
                         & tridx_arr(1:nimg_count)
                      itp = itp + nimg_count
